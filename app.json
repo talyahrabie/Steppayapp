@@ -1,0 +1,56 @@
+{
+  "expo": {
+    "name": "StePPay",
+    "slug": "StePPay",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.anonymous.StePPay",
+      "infoPlist": {
+        "NSMotionUsageDescription": "نحتاج للوصول لحساس الحركة لعد خطواتك ومكافأتك عليها",
+        "NSPhotoLibraryUsageDescription": "نحتاج للوصول إلى معرض الصور لتغيير صورة البروفايل الخاصة بك",
+        "NSCameraUsageDescription": "نحتاج للوصول إلى الكاميرا لالتقاط صورة للبروفايل"
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#5b24c1"
+      },
+      "package": "package": "com.rabee.steppay",
+      "permissions": [
+        "android.permission.ACTIVITY_RECOGNITION",
+        "android.permission.INTERNET",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.CAMERA"
+      ]
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "static",
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "يتاج التطبيق للوصول إلى الصور لتتمكن من تغيير صورة ملفك الشخصي.",
+          "cameraPermission": "يتاج التطبيق للوصول إلى الكاميرا لتتمكن من التقاط صورة لملفك الشخصي."
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
