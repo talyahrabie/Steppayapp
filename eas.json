@@ -1,16 +1,17 @@
 {
   "cli": {
-    "version": ">= 7.0.0"
+    "version": ">= 7.0.0",
+    "appVersionSource": "remote"
   },
   "build": {
-    "preview": {
+    "production": {
       "android": {
         "buildType": "apk"
       },
       "env": {
         "NPM_CONFIG_LEGACY_PEER_DEPS": "true"
-      }
-    },
-    "production": {}
+      },
+      "prebuild": true
+    }
   }
 }
