@@ -27,7 +27,7 @@
     "android": {
       "package": "com.rabee.steppay",
       "adaptiveIcon": {
-        "foregroundImage": "./assets/img/adaptive-icon.png",
+        "foregroundImage": "./assets/img/icon.png",
         "backgroundColor": "#ffffff"
       },
       "permissions": [
