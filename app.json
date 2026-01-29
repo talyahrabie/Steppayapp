@@ -12,6 +12,9 @@
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.rabee.steppay",
@@ -22,11 +25,11 @@
       }
     },
     "android": {
+      "package": "com.rabee.steppay",
       "adaptiveIcon": {
         "foregroundImage": "./assets/img/adaptive-icon.png",
-        "backgroundColor": "#5b24c1"
+        "backgroundColor": "#ffffff"
       },
-      "package": "com.rabee.steppay",
       "permissions": [
         "android.permission.ACTIVITY_RECOGNITION",
         "android.permission.INTERNET",
@@ -46,8 +49,8 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "يتاج التطبيق للوصول إلى الصور لتتمكن من تغيير صورة ملفك الشخصي.",
-          "cameraPermission": "يتاج التطبيق للوصول إلى الكاميرا لتتمكن من التقاط صورة لملفك الشخصي."
+          "photosPermission": "يحتاج التطبيق للوصول إلى الصور لتتمكن من تغيير صورة ملفك الشخصي.",
+          "cameraPermission": "يحتاج التطبيق للوصول إلى الكاميرا لتتمكن من التقاط صورة لملفك الشخصي."
         }
       ]
     ],
