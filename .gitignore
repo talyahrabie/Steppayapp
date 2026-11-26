@@ -1,28 +1,32 @@
+# dependencies
 node_modules/
+
+# Expo
 .expo/
 dist/
-npm-debug.*
+web-build/
+expo-env.d.ts
+
+# Environment variables — NEVER commit real keys (see .env.example)
+.env
+.env*.local
+!.env.example
+
+# Native build artifacts
+ios/
+android/
 *.jks
 *.p8
 *.p12
 *.key
 *.mobileprovision
-*.orig.*
-web-build/
-assets/
+
+# Metro
 metro-cache/
 .metro-cache-*/
-
-
-
-
-ios
-android
-
-# macOS
-.DS_Store
-
-# Temporary files created by Metro to check the health of the file watcher
 .metro-health-check*
 
-expo-env.d.ts
+# misc
+npm-debug.*
+*.orig.*
+.DS_Store

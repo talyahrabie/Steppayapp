@@ -12,6 +12,9 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { supabase } from '../lib/supabase';
+import { ONBOARDING_SEEN_KEY } from '../lib/config';
 
 const { width, height } = Dimensions.get('window');
 
@@ -20,7 +23,7 @@ interface OnboardingSlide {
   title: string;
   description: string;
   icon: keyof typeof Ionicons.glyphMap;
-  colors: string[];
+  colors: [string, string];
 }
 
 const slides: OnboardingSlide[] = [
@@ -59,17 +62,24 @@ export default function OnboardingScreen() {
   const flatListRef = useRef<FlatList>(null);
   const scrollX = useRef(new Animated.Value(0)).current;
 
+  /** Mark onboarding as seen (persisted) and route by session state. */
+  const completeOnboarding = async () => {
+    await AsyncStorage.setItem(ONBOARDING_SEEN_KEY, 'true');
+    const { data } = await supabase.auth.getSession();
+    router.replace(data.session ? '/(tabs)/home' : '/login');
+  };
+
   const handleNext = () => {
     if (currentIndex < slides.length - 1) {
       flatListRef.current?.scrollToIndex({ index: currentIndex + 1 });
       setCurrentIndex(currentIndex + 1);
     } else {
-      router.replace('/login');
+      completeOnboarding();
     }
   };
 
   const handleSkip = () => {
-    router.replace('/login');
+    completeOnboarding();
   };
 
   const renderSlide = ({ item, index }: { item: OnboardingSlide; index: number }) => (

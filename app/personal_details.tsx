@@ -5,6 +5,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage'; // استدعاء المخزن
+import { supabase } from '../lib/supabase';
 
 export default function PersonalDetailsScreen() {
   const router = useRouter();
@@ -15,7 +16,9 @@ export default function PersonalDetailsScreen() {
   const [phone, setPhone] = useState('');
   const [age, setAge] = useState('');
 
-  // 1. أول ما الصفحة تفتح، نجيب البيانات المتسجلة
+  // 1. أول ما الصفحة تفتح، نجيب البيانات المتسجلة — بدون أي قيم شخصية
+  // افتراضية مكتوبة في الكود. الحقول تبدأ فارغة، والإيميل يُملأ من حساب
+  // تسجيل الدخول نفسه عند عدم وجود قيمة محفوظة.
   useEffect(() => {
     const loadUserData = async () => {
       try {
@@ -24,12 +27,18 @@ export default function PersonalDetailsScreen() {
         const savedPhone = await AsyncStorage.getItem('user_phone');
         const savedAge = await AsyncStorage.getItem('user_age');
 
-        // لو لقينا بيانات متسجلة نعرضها، لو مفيش نعرض القيم الافتراضية
-        setName(savedName || 'Ahmed'); 
-        setEmail(savedEmail || 'rabeead@hotmail.com');
-        setPhone(savedPhone || '+20 123 456 7890');
-        setAge(savedAge || '28');
-        
+        if (savedName) setName(savedName);
+        if (savedPhone) setPhone(savedPhone);
+        if (savedAge) setAge(savedAge);
+
+        if (savedEmail) {
+          setEmail(savedEmail);
+        } else {
+          const { data } = await supabase.auth.getUser();
+          if (data.user?.email) setEmail(data.user.email);
+          const metaName = (data.user?.user_metadata?.full_name || data.user?.user_metadata?.name) as string | undefined;
+          if (!savedName && metaName) setName(metaName);
+        }
       } catch (e) {
         console.error('فشل في تحميل البيانات', e);
       }

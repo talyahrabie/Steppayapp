@@ -7,7 +7,7 @@ interface FeatureCardProps {
   title: string;
   description: string;
   icon: keyof typeof Ionicons.glyphMap;
-  colors: string[];
+  colors: [string, string, ...string[]];
   rightIcon?: keyof typeof Ionicons.glyphMap;
   rightText?: string;
   onPress?: () => void;

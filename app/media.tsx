@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -13,6 +13,7 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
+import { Audio } from 'expo-av';
 
 interface Track {
   id: string;
@@ -21,6 +22,13 @@ interface Track {
   duration: string;
   imageUrl: string;
   category: string;
+  /**
+   * Stream URL for this track. NOTE: the current catalog data ships
+   * without audio URLs, so playback reports an honest "audio not
+   * available" error state (see handlePlayTrack) instead of pretending
+   * to play. Add real URLs here and the player works as-is.
+   */
+  audioUrl?: string;
 }
 
 interface Playlist {
@@ -28,7 +36,9 @@ interface Playlist {
   title: string;
   trackCount: number;
   imageUrl: string;
-  colors: string[];
+  colors: [string, string];
+  /** Category whose first track starts playing when the playlist is tapped. */
+  category: string;
 }
 
 const playlists: Playlist[] = [
@@ -38,6 +48,7 @@ const playlists: Playlist[] = [
     trackCount: 15,
     imageUrl: 'https://d64gsuwffb70l.cloudfront.net/6976df9d18e95358de237c4f_1769398194158_4bfc8741.jpeg',
     colors: ['#4A90E2', '#357ABD'],
+    category: 'running',
   },
   {
     id: '2',
@@ -45,6 +56,7 @@ const playlists: Playlist[] = [
     trackCount: 20,
     imageUrl: 'https://d64gsuwffb70l.cloudfront.net/6976df9d18e95358de237c4f_1769398198284_17563f2d.jpeg',
     colors: ['#E53935', '#C62828'],
+    category: 'workout',
   },
   {
     id: '3',
@@ -52,6 +64,7 @@ const playlists: Playlist[] = [
     trackCount: 12,
     imageUrl: 'https://d64gsuwffb70l.cloudfront.net/6976df9d18e95358de237c4f_1769398201342_97f4fbdd.jpeg',
     colors: ['#26A69A', '#00897B'],
+    category: 'relaxing',
   },
   {
     id: '4',
@@ -59,6 +72,7 @@ const playlists: Playlist[] = [
     trackCount: 30,
     imageUrl: 'https://d64gsuwffb70l.cloudfront.net/6976df9d18e95358de237c4f_1769398204589_eaa4b862.jpeg',
     colors: ['#9575CD', '#7E57C2'],
+    category: 'quran',
   },
 ];
 
@@ -117,26 +131,109 @@ export default function MediaScreen() {
   const [activeCategory, setActiveCategory] = useState('all');
   const [currentTrack, setCurrentTrack] = useState<Track | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [playbackError, setPlaybackError] = useState<string | null>(null);
+  const soundRef = useRef<Audio.Sound | null>(null);
 
   const filteredTracks =
     activeCategory === 'all'
       ? tracks
       : tracks.filter((t) => t.category === activeCategory);
 
-  const handlePlayTrack = (track: Track) => {
+  // إيقاف وتفريغ الصوت عند مغادرة الشاشة
+  useEffect(() => {
+    return () => {
+      if (soundRef.current) {
+        soundRef.current.unloadAsync();
+        soundRef.current = null;
+      }
+    };
+  }, []);
+
+  const stopCurrentSound = async () => {
+    if (soundRef.current) {
+      try {
+        await soundRef.current.stopAsync();
+        await soundRef.current.unloadAsync();
+      } catch (e) {
+        console.log('Error stopping sound:', e);
+      }
+      soundRef.current = null;
+    }
+  };
+
+  /** تشغيل/إيقاف فعلي عبر expo-av — لا توجد محاكاة بعد الآن. */
+  const handlePlayTrack = async (track: Track) => {
+    setPlaybackError(null);
+
+    // نفس المقطع: تبديل تشغيل/إيقاف مؤقت
+    if (currentTrack?.id === track.id && soundRef.current) {
+      try {
+        if (isPlaying) {
+          await soundRef.current.pauseAsync();
+          setIsPlaying(false);
+        } else {
+          await soundRef.current.playAsync();
+          setIsPlaying(true);
+        }
+      } catch (e) {
+        console.log('Error toggling playback:', e);
+        setPlaybackError('Could not control playback. Please try again.');
+      }
+      return;
+    }
+
+    await stopCurrentSound();
     setCurrentTrack(track);
-    setIsPlaying(true);
+    setIsPlaying(false);
+
+    // لا يوجد مصدر صوتي لهذا المقطع في البيانات الحالية → حالة خطأ صريحة
+    if (!track.audioUrl) {
+      setPlaybackError(`Audio for "${track.title}" is not available yet.`);
+      return;
+    }
+
+    try {
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: false,
+        playsInSilentModeIOS: true,
+        staysActiveInBackground: true,
+      });
+      const { sound } = await Audio.Sound.createAsync(
+        { uri: track.audioUrl },
+        { shouldPlay: true }
+      );
+      soundRef.current = sound;
+      setIsPlaying(true);
+      sound.setOnPlaybackStatusUpdate((status) => {
+        if (status.isLoaded) {
+          setIsPlaying(status.isPlaying);
+          if (status.didJustFinish) setIsPlaying(false);
+        }
+      });
+    } catch (e) {
+      console.log('Error playing track:', e);
+      setPlaybackError('Could not play this track. Check your connection and try again.');
+      setIsPlaying(false);
+    }
+  };
+
+  const handlePlayPlaylist = (playlist: Playlist) => {
+    const firstTrack = tracks.find((t) => t.category === playlist.category);
+    if (firstTrack) {
+      setActiveCategory(playlist.category);
+      handlePlayTrack(firstTrack);
+    }
   };
 
   const renderPlaylist = ({ item }: { item: Playlist }) => (
-    <TouchableOpacity style={styles.playlistCard}>
+    <TouchableOpacity style={styles.playlistCard} onPress={() => handlePlayPlaylist(item)}>
       <LinearGradient colors={item.colors} style={styles.playlistGradient}>
         <Image source={{ uri: item.imageUrl }} style={styles.playlistImage} />
         <View style={styles.playlistInfo}>
           <Text style={styles.playlistTitle}>{item.title}</Text>
           <Text style={styles.playlistTracks}>{item.trackCount} tracks</Text>
         </View>
-        <TouchableOpacity style={styles.playlistPlayButton}>
+        <TouchableOpacity style={styles.playlistPlayButton} onPress={() => handlePlayPlaylist(item)}>
           <Ionicons name="play" size={20} color="#FFFFFF" />
         </TouchableOpacity>
       </LinearGradient>
@@ -239,6 +336,17 @@ export default function MediaScreen() {
         <View style={styles.bottomSpacing} />
       </ScrollView>
 
+      {/* Playback error state */}
+      {playbackError && (
+        <View style={styles.errorBar}>
+          <Ionicons name="alert-circle" size={18} color="#FFFFFF" />
+          <Text style={styles.errorText}>{playbackError}</Text>
+          <TouchableOpacity onPress={() => setPlaybackError(null)}>
+            <Ionicons name="close" size={18} color="#FFFFFF" />
+          </TouchableOpacity>
+        </View>
+      )}
+
       {/* Now Playing Bar */}
       {currentTrack && (
         <View style={styles.nowPlayingBar}>
@@ -253,7 +361,7 @@ export default function MediaScreen() {
           </View>
           <TouchableOpacity
             style={styles.nowPlayingButton}
-            onPress={() => setIsPlaying(!isPlaying)}
+            onPress={() => handlePlayTrack(currentTrack)}
           >
             <Ionicons
               name={isPlaying ? 'pause' : 'play'}
@@ -425,6 +533,24 @@ const styles = StyleSheet.create({
   },
   bottomSpacing: {
     height: 30,
+  },
+  errorBar: {
+    position: 'absolute',
+    bottom: 96,
+    left: 16,
+    right: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#C62828',
+    borderRadius: 12,
+    padding: 12,
+    gap: 8,
+  },
+  errorText: {
+    flex: 1,
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '500',
   },
   nowPlayingBar: {
     position: 'absolute',

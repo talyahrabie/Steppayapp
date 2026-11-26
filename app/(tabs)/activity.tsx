@@ -187,6 +187,14 @@ export default function ActivityScreen() {
     isPlaying ? await sound.pauseAsync() : await sound.playAsync();
   };
 
+  // التنقل بين أقسام الصوت (السابق/التالي في المشغّل المصغّر)
+  const cycleMedia = (direction: 1 | -1) => {
+    const index = mediaSections.findIndex(m => m.id === activeMedia);
+    const nextIndex = (index + direction + mediaSections.length) % mediaSections.length;
+    setIsPlaying(true);
+    setActiveMedia(mediaSections[nextIndex].id);
+  };
+
   const currentMedia = mediaSections.find(m => m.id === activeMedia);
 
   return (
@@ -208,14 +216,19 @@ export default function ActivityScreen() {
         <View style={styles.listSection}>
             {loading ? <ActivityIndicator size="small" color="#4A90E2" /> : 
               exercises.filter(ex => ex.category.toLowerCase() === activeCategory).map(ex => (
-                <ExerciseCard 
-                  key={ex.id} 
-                  {...ex} 
+                <ExerciseCard
+                  key={ex.id}
+                  title={ex.title}
+                  description={ex.description}
+                  duration={ex.duration_minutes}
+                  difficulty={ex.difficulty}
+                  imageUrl={ex.image_url}
+                  category={ex.category}
                   onStart={() => Alert.alert(
-                    ex.title, 
+                    ex.title,
                     ex.instructions,
                     [{ text: isAr ? 'حسناً' : 'Ok' }]
-                  )} 
+                  )}
                 />
               ))
             }
@@ -228,10 +241,12 @@ export default function ActivityScreen() {
             </View>
 
             <MiniPlayer
-                title={isBuffering ? (isAr ? "جاري التحميل..." : "Buffering...") : currentMedia?.title}
+                title={isBuffering ? (isAr ? "جاري التحميل..." : "Buffering...") : (currentMedia?.title ?? '')}
                 artist={isPlaying ? (isAr ? "استماع الآن" : "Listening Now") : (isAr ? "اضغط للتشغيل" : "Tap to play")}
                 isPlaying={isPlaying}
                 onPlayPause={handlePlayPause}
+                onNext={() => cycleMedia(1)}
+                onPrevious={() => cycleMedia(-1)}
             />
 
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.mediaTabsScroll}>

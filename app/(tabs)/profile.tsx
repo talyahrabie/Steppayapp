@@ -3,20 +3,22 @@ import {
   View, Text, StyleSheet, Image, TouchableOpacity, ScrollView, StatusBar, Alert
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter, useFocusEffect } from 'expo-router'; 
+import { useRouter, useFocusEffect } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
-import AsyncStorage from '@react-native-async-storage/async-storage'; 
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useApp } from '../context/AppContext';
+import { supabase } from '../../lib/supabase';
 
 export default function ProfileScreen() {
   const router = useRouter();
   const { colors, t, language, level, xp } = useApp();
   const isAr = language === 'ar';
-  
-  // حالة البيانات الشخصية
-  const [name, setName] = useState('Ahmed');
-  const [email, setEmail] = useState('user@steppay.com');
-  const [profileImage, setProfileImage] = useState('https://cdn-icons-png.flaticon.com/512/3135/3135715.png');
+
+  // حالة البيانات الشخصية — تبدأ فارغة وتُملأ من البيانات المحفوظة أو من
+  // حساب المستخدم المسجّل. لا توجد قيم شخصية افتراضية مكتوبة في الكود.
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [profileImage, setProfileImage] = useState('');
 
   // تحديث البيانات فور العودة للشاشة
   useFocusEffect(
@@ -34,9 +36,33 @@ export default function ProfileScreen() {
       if (savedName) setName(savedName);
       if (savedEmail) setEmail(savedEmail);
       if (savedImage) setProfileImage(savedImage);
+
+      // الافتراضي من حساب الدخول نفسه عند غياب بيانات محفوظة
+      if (!savedName || !savedEmail) {
+        const { data } = await supabase.auth.getUser();
+        const user = data.user;
+        if (user) {
+          if (!savedEmail && user.email) setEmail(user.email);
+          const metaName = (user.user_metadata?.full_name || user.user_metadata?.name) as string | undefined;
+          if (!savedName && metaName) setName(metaName);
+        }
+      }
     } catch (e) {
       console.log('Error loading profile data');
     }
+  };
+
+  const handleLogout = () => {
+    Alert.alert(t('logout'), t('logout_confirm'), [
+      { text: t('cancel'), style: 'cancel' },
+      {
+        text: t('logout'),
+        style: 'destructive',
+        onPress: async () => {
+          await supabase.auth.signOut();
+        },
+      },
+    ]);
   };
 
   const pickImage = async () => {
@@ -77,7 +103,13 @@ export default function ProfileScreen() {
         <View style={styles.profileSection}>
           <View style={styles.avatarContainer}>
             <View style={[styles.avatarWrapper, { borderColor: colors.card }]}>
-              <Image source={{ uri: profileImage }} style={styles.avatar} />
+              {profileImage ? (
+                <Image source={{ uri: profileImage }} style={styles.avatar} />
+              ) : (
+                <View style={[styles.avatar, styles.avatarPlaceholder]}>
+                  <Ionicons name="person" size={48} color="#B0BEC5" />
+                </View>
+              )}
               <TouchableOpacity style={styles.cameraButton} onPress={pickImage}>
                 <Ionicons name="camera" size={18} color="#FFF" />
               </TouchableOpacity>
@@ -85,8 +117,10 @@ export default function ProfileScreen() {
           </View>
 
           <View style={styles.userInfo}>
-            <Text style={[styles.userName, { color: colors.text }]}>{name}</Text>
-            <Text style={styles.userEmail}>{email}</Text>
+            <Text style={[styles.userName, { color: colors.text }]}>
+              {name || (isAr ? 'مستخدم StePPay' : 'StePPay User')}
+            </Text>
+            {!!email && <Text style={styles.userEmail}>{email}</Text>}
           </View>
 
           {/* الإحصائيات الحقيقية من AppContext */}
@@ -123,8 +157,8 @@ export default function ProfileScreen() {
             </TouchableOpacity>
 
             {/* الإنجازات */}
-            <TouchableOpacity 
-                style={[styles.menuItem, { backgroundColor: colors.card, flexDirection: isAr ? 'row-reverse' : 'row' }]} 
+            <TouchableOpacity
+                style={[styles.menuItem, { backgroundColor: colors.card, flexDirection: isAr ? 'row-reverse' : 'row' }]}
                 onPress={() => router.push('/achievements')}
             >
               <View style={styles.menuIconBg}>
@@ -135,7 +169,49 @@ export default function ProfileScreen() {
               </Text>
               <Ionicons name={isAr ? "chevron-back" : "chevron-forward"} size={20} color={colors.subText} />
             </TouchableOpacity>
-            
+
+            {/* سجل النشاط */}
+            <TouchableOpacity
+                style={[styles.menuItem, { backgroundColor: colors.card, flexDirection: isAr ? 'row-reverse' : 'row' }]}
+                onPress={() => router.push('/history')}
+            >
+              <View style={styles.menuIconBg}>
+                <Ionicons name="time-outline" size={22} color="#26A69A" />
+              </View>
+              <Text style={[styles.menuText, { color: colors.text, textAlign: isAr ? 'right' : 'left', marginHorizontal: 15 }]}>
+                {isAr ? 'سجل النشاط' : 'Activity History'}
+              </Text>
+              <Ionicons name={isAr ? "chevron-back" : "chevron-forward"} size={20} color={colors.subText} />
+            </TouchableOpacity>
+
+            {/* مكتبة الوسائط */}
+            <TouchableOpacity
+                style={[styles.menuItem, { backgroundColor: colors.card, flexDirection: isAr ? 'row-reverse' : 'row' }]}
+                onPress={() => router.push('/media')}
+            >
+              <View style={styles.menuIconBg}>
+                <Ionicons name="musical-notes-outline" size={22} color="#9B59B6" />
+              </View>
+              <Text style={[styles.menuText, { color: colors.text, textAlign: isAr ? 'right' : 'left', marginHorizontal: 15 }]}>
+                {isAr ? 'مكتبة الوسائط' : 'Media Library'}
+              </Text>
+              <Ionicons name={isAr ? "chevron-back" : "chevron-forward"} size={20} color={colors.subText} />
+            </TouchableOpacity>
+
+            {/* الإشعارات */}
+            <TouchableOpacity
+                style={[styles.menuItem, { backgroundColor: colors.card, flexDirection: isAr ? 'row-reverse' : 'row' }]}
+                onPress={() => router.push('/notifications')}
+            >
+              <View style={styles.menuIconBg}>
+                <Ionicons name="notifications-outline" size={22} color="#FF7043" />
+              </View>
+              <Text style={[styles.menuText, { color: colors.text, textAlign: isAr ? 'right' : 'left', marginHorizontal: 15 }]}>
+                {isAr ? 'الإشعارات' : 'Notifications'}
+              </Text>
+              <Ionicons name={isAr ? "chevron-back" : "chevron-forward"} size={20} color={colors.subText} />
+            </TouchableOpacity>
+
             <Text style={[styles.menuTitle, { marginTop: 20, textAlign: isAr ? 'right' : 'left' }]}>
                 {isAr ? 'الإعدادات' : 'Settings'}
             </Text>
@@ -152,6 +228,19 @@ export default function ProfileScreen() {
                 {t('sec_general')}
               </Text>
               <Ionicons name={isAr ? "chevron-back" : "chevron-forward"} size={20} color={colors.subText} />
+            </TouchableOpacity>
+
+            {/* تسجيل الخروج */}
+            <TouchableOpacity
+              style={[styles.menuItem, { backgroundColor: colors.card, flexDirection: isAr ? 'row-reverse' : 'row' }]}
+              onPress={handleLogout}
+            >
+              <View style={styles.menuIconBg}>
+                <Ionicons name="log-out-outline" size={22} color="#E53935" />
+              </View>
+              <Text style={[styles.menuText, { color: '#E53935', textAlign: isAr ? 'right' : 'left', marginHorizontal: 15 }]}>
+                {t('logout')}
+              </Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -184,6 +273,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.30, shadowRadius: 4.65, elevation: 8,
   },
   avatar: { width: '100%', height: '100%', borderRadius: 55 },
+  avatarPlaceholder: { backgroundColor: '#ECEFF1', alignItems: 'center', justifyContent: 'center' },
   cameraButton: {
     position: 'absolute', bottom: 0, right: 0, backgroundColor: '#4A90E2',
     width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center',

@@ -1,11 +1,13 @@
-import React, { useState } from 'react';
+import React from 'react';
 import {
   View, Text, StyleSheet, ScrollView, SafeAreaView, StatusBar,
   TouchableOpacity, Switch, Alert
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useApp } from '../context/AppContext';
+import { supabase } from '../../lib/supabase';
 
 interface SettingItem {
   id: string;
@@ -20,13 +22,44 @@ interface SettingItem {
 
 export default function SettingsScreen() {
   const router = useRouter();
-  const { theme, language, stepTracking, toggleTheme, toggleStepTracking, changeLanguage, t, colors } = useApp();
+  const {
+    theme, language, stepTracking, autoSync, pushNotifications, dhikrReminders, soundEnabled,
+    toggleTheme, toggleStepTracking, toggleAutoSync, togglePushNotifications,
+    toggleDhikrReminders, toggleSoundEnabled, changeLanguage, t, colors
+  } = useApp();
   const isDark = theme === 'dark';
 
-  const [autoSync, setAutoSync] = useState(true);
-  const [pushNotif, setPushNotif] = useState(true);
-  const [dhikr, setDhikr] = useState(true);
-  const [sound, setSound] = useState(true);
+  // تسجيل الخروج — إنهاء جلسة Supabase؛ بوابة الدخول في _layout تنقل
+  // المستخدم تلقائيًا لشاشة تسجيل الدخول عند انتهاء الجلسة.
+  const handleLogout = () => {
+    Alert.alert(t('logout'), t('logout_confirm'), [
+      { text: t('cancel'), style: 'cancel' },
+      {
+        text: t('logout'),
+        style: 'destructive',
+        onPress: async () => {
+          await supabase.auth.signOut();
+        },
+      },
+    ]);
+  };
+
+  // حذف الحساب — تأكيد صريح، ثم مسح بيانات التطبيق من الجهاز وتسجيل
+  // الخروج. (حذف الحساب السحابي نهائيًا يتم عبر طلب للمالك — موضّح في
+  // نص التأكيد وسياسة الخصوصية.)
+  const handleDeleteAccount = () => {
+    Alert.alert(t('delete_account'), t('delete_confirm'), [
+      { text: t('cancel'), style: 'cancel' },
+      {
+        text: t('delete_account'),
+        style: 'destructive',
+        onPress: async () => {
+          await AsyncStorage.clear();
+          await supabase.auth.signOut();
+        },
+      },
+    ]);
+  };
 
   const handleLanguageChange = () => {
     Alert.alert(t('language'), "Choose / اختر", [
@@ -54,7 +87,7 @@ export default function SettingsScreen() {
       icon: 'sync',
       type: 'toggle',
       value: autoSync,
-      onPress: () => setAutoSync(!autoSync),
+      onPress: toggleAutoSync,
       description: t('auto_sync_desc'),
       color: '#2196F3'
     },
@@ -67,8 +100,8 @@ export default function SettingsScreen() {
       label: t('push_notif'),
       icon: 'notifications',
       type: 'toggle',
-      value: pushNotif,
-      onPress: () => setPushNotif(!pushNotif),
+      value: pushNotifications,
+      onPress: togglePushNotifications,
       description: t('push_notif_desc'),
       color: '#FF9800'
     },
@@ -77,8 +110,8 @@ export default function SettingsScreen() {
       label: t('dhikr'),
       icon: 'book',
       type: 'toggle',
-      value: dhikr,
-      onPress: () => setDhikr(!dhikr),
+      value: dhikrReminders,
+      onPress: toggleDhikrReminders,
       description: t('dhikr_desc'),
       color: '#009688'
     },
@@ -87,8 +120,8 @@ export default function SettingsScreen() {
       label: t('sound'),
       icon: 'volume-high',
       type: 'toggle',
-      value: sound,
-      onPress: () => setSound(!sound),
+      value: soundEnabled,
+      onPress: toggleSoundEnabled,
       description: t('sound_desc'),
       color: '#673AB7'
     }
@@ -195,8 +228,16 @@ export default function SettingsScreen() {
         {renderSection(t('sec_other'), otherSettings)}
         
         <TouchableOpacity
+          style={[styles.logoutButton, { flexDirection: language === 'ar' ? 'row-reverse' : 'row' }]}
+          onPress={handleLogout}
+        >
+          <Ionicons name="log-out-outline" size={20} color="#4A5568" />
+          <Text style={styles.logoutText}>{t('logout')}</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
           style={[styles.deleteButton, { flexDirection: language === 'ar' ? 'row-reverse' : 'row' }]}
-          onPress={() => Alert.alert(t('delete_account'), t('delete_confirm'))}
+          onPress={handleDeleteAccount}
         >
           <Ionicons name="trash-outline" size={20} color="#E53935" />
           <Text style={styles.deleteText}>{t('delete_account')}</Text>
@@ -234,6 +275,10 @@ const styles = StyleSheet.create({
   settingText: { flex: 1 },
   settingLabel: { fontSize: 16, fontWeight: '500' },
   settingDescription: { fontSize: 12, marginTop: 3 },
+  logoutButton: {
+    alignItems: 'center', justifyContent: 'center', marginHorizontal: 20, paddingVertical: 16, backgroundColor: '#ECEFF1', borderRadius: 16, gap: 8, marginTop: 10,
+  },
+  logoutText: { fontSize: 16, fontWeight: '600', color: '#37474F' },
   deleteButton: {
     alignItems: 'center', justifyContent: 'center', marginHorizontal: 20, paddingVertical: 16, backgroundColor: '#FFEBEE', borderRadius: 16, gap: 8, marginTop: 10,
   },

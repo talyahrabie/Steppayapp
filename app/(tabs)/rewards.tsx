@@ -6,6 +6,8 @@ import {
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../context/AppContext';
 import CategoryTabs from '../components/CategoryTabs';
+import { supabase } from '../../lib/supabase';
+import { recordRedemption } from '../../lib/redemptions';
 
 const { width } = Dimensions.get('window');
 
@@ -20,11 +22,12 @@ interface RewardItem {
 }
 
 export default function RewardsScreen() {
-  const { colors, language, steps, t } = useApp();
+  const { colors, language, points, spendPoints } = useApp();
   const isAr = language === 'ar';
-  
-  // محاكاة الرصيد (كل 10 خطوات = 1 نقطة)
-  const currentBalance = Math.floor(steps / 10);
+
+  // الرصيد الحقيقي القابل للصرف من AppContext (نقاط مكتسبة − مستبدَلة)
+  // بمعدل التحويل الموحّد في lib/config.ts — لا توجد محاكاة بعد الآن.
+  const currentBalance = points;
 
   const [activeCategory, setActiveCategory] = useState('all');
 
@@ -76,9 +79,48 @@ export default function RewardsScreen() {
   const filteredRewards = activeCategory === 'all' ? rewards : rewards.filter(r => r.category === activeCategory);
 
   const handleRedeem = (item: RewardItem) => {
-    if (currentBalance >= item.cost) {
-        Alert.alert(isAr ? 'مبروك!' : 'Congrats!', isAr ? `تم استبدال ${item.title} بنجاح` : `You redeemed ${item.title}`);
+    if (currentBalance < item.cost) {
+      Alert.alert(
+        isAr ? 'رصيد غير كافٍ' : 'Insufficient balance',
+        isAr ? 'تحتاج إلى نقاط أكثر لاستبدال هذه المكافأة.' : 'You need more points to redeem this reward.'
+      );
+      return;
     }
+
+    Alert.alert(
+      isAr ? 'تأكيد الاستبدال' : 'Confirm redemption',
+      isAr
+        ? `سيتم خصم ${item.cost} نقطة من رصيدك مقابل ${item.title}.`
+        : `${item.cost} points will be deducted from your balance for ${item.title}.`,
+      [
+        { text: isAr ? 'إلغاء' : 'Cancel', style: 'cancel' },
+        {
+          text: isAr ? 'استبدال' : 'Redeem',
+          onPress: async () => {
+            // 1) خصم فعلي من الرصيد — يفشل لو الرصيد لا يكفي
+            const deducted = spendPoints(item.cost);
+            if (!deducted) {
+              Alert.alert(
+                isAr ? 'رصيد غير كافٍ' : 'Insufficient balance',
+                isAr ? 'تحتاج إلى نقاط أكثر لاستبدال هذه المكافأة.' : 'You need more points to redeem this reward.'
+              );
+              return;
+            }
+            // 2) تسجيل العملية محليًا وفي قاعدة البيانات عند تسجيل الدخول
+            const { data } = await supabase.auth.getSession();
+            await recordRedemption(
+              { id: item.id, title: item.title, cost: item.cost },
+              data.session?.user?.id ?? null
+            );
+            // 3) نجاح حقيقي بعد الخصم والتسجيل فقط
+            Alert.alert(
+              isAr ? 'مبروك!' : 'Congrats!',
+              isAr ? `تم استبدال ${item.title} بنجاح` : `You redeemed ${item.title}`
+            );
+          },
+        },
+      ]
+    );
   };
 
   return (

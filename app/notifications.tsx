@@ -2,11 +2,14 @@ import { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, Switch, TouchableOpacity, Alert, Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import { Ionicons } from '@expo/vector-icons';
+import { router } from 'expo-router';
 
 // إعدادات طريقة ظهور التنبيه (يظهر صوت ولا لأ، يظهر فوق التطبيق ولا لأ)
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
     shouldShowAlert: true,
+    shouldShowBanner: true,
+    shouldShowList: true,
     shouldPlaySound: true,
     shouldSetBadge: false,
   }),
@@ -42,7 +45,13 @@ export default function NotificationsScreen() {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.headerTitle}>إعدادات الإشعارات</Text>
+      <View style={styles.headerRow}>
+        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+          <Ionicons name="arrow-back" size={24} color="#333" />
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>إعدادات الإشعارات</Text>
+        <View style={styles.backButton} />
+      </View>
       
       {/* زرار التفعيل والقفل */}
       <View style={styles.settingRow}>
@@ -70,7 +79,9 @@ export default function NotificationsScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, padding: 20, backgroundColor: '#F5F7FA' },
-  headerTitle: { fontSize: 24, fontWeight: 'bold', marginBottom: 30, color: '#333', textAlign: 'center' },
+  headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 30 },
+  backButton: { padding: 4, width: 32 },
+  headerTitle: { fontSize: 24, fontWeight: 'bold', color: '#333', textAlign: 'center' },
   settingRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',

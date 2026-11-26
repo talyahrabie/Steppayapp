@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -6,89 +6,38 @@ import {
   ScrollView,
   TouchableOpacity,
   SafeAreaView,
-  StatusBar,
-  Alert,
-  AppState
+  StatusBar
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
-import { Pedometer } from 'expo-sensors';
 
 import StepCounter from '../components/StepCounter';
 import PointsDisplay from '../components/PointsDisplay';
 import FeatureCard from '../components/FeatureCard';
+import DhikrReminder from '../components/DhikrReminder';
+import { usePedometer } from '../hooks/usePedometer';
+import { useApp } from '../context/AppContext';
+import { DAILY_STEP_GOAL } from '../../lib/config';
 
 export default function HomeScreen() {
-  const [currentStepCount, setCurrentStepCount] = useState(0);
-  const [points, setPoints] = useState(0);
-  const [calories, setCalories] = useState(0);
-  const [distance, setDistance] = useState(0);
-  const [pedometerStatus, setPedometerStatus] = useState('Syncing...');
-  
-  const subscriptionRef = useRef(null);
-  const dailyGoal = 10000;
+  // The shared pedometer engine: it owns the sensor subscription, feeds
+  // AppContext (points/XP), persists today's total and syncs to Supabase.
+  // Home previously ran its own duplicate pedometer + 3-second polling and
+  // never wrote anything to the shared state — that is all gone now.
+  const { steps, points, calories, distance, isPedometerAvailable } = usePedometer();
+  const { stepTracking } = useApp();
+  const [showDhikr, setShowDhikr] = useState(false);
 
-  const fetchRealTimeSteps = async () => {
-    const isAvailable = await Pedometer.isAvailableAsync();
-    
-    if (isAvailable) {
-      const end = new Date();
-      const start = new Date();
-      start.setHours(0, 0, 0, 0); 
+  const dailyGoal = DAILY_STEP_GOAL;
 
-      try {
-        const result = await Pedometer.getStepCountAsync(start, end);
-        if (result) {
-          setCurrentStepCount(result.steps);
-          setPedometerStatus('Active');
-        }
-      } catch (error) {
-        setPedometerStatus('Sensor Error');
-        console.log("Error fetching steps:", error);
-      }
-    } else {
-      setPedometerStatus('Not Available');
-    }
-  };
-
-  useEffect(() => {
-    fetchRealTimeSteps();
-
-    const subscribe = async () => {
-      const isAvailable = await Pedometer.isAvailableAsync();
-      if (isAvailable) {
-        subscriptionRef.current = Pedometer.watchStepCount(() => {
-          fetchRealTimeSteps();
-        });
-      }
-    };
-    subscribe();
-
-    const intervalId = setInterval(() => {
-      fetchRealTimeSteps();
-    }, 3000); 
-
-    const subscription = AppState.addEventListener('change', nextAppState => {
-      if (nextAppState === 'active') {
-        fetchRealTimeSteps(); 
-      }
-    });
-
-    return () => {
-      subscriptionRef.current && subscriptionRef.current.remove();
-      clearInterval(intervalId);
-      subscription.remove();
-    };
-  }, []);
-
-  useEffect(() => {
-    setPoints(Math.floor(currentStepCount / 100));
-    setDistance(((currentStepCount * 0.76) / 1000).toFixed(2));
-    setCalories(Math.floor(currentStepCount * 0.04));
-  }, [currentStepCount]);
+  const trackingStatus = !stepTracking
+    ? 'Tracking Paused'
+    : isPedometerAvailable
+      ? 'Live Tracking'
+      : 'Sensor Unavailable';
 
   const handleNotifications = () => {
-    Alert.alert("Notifications", "No new notifications");
+    router.push('/notifications');
   };
 
   const handleProfile = () => {
@@ -99,13 +48,13 @@ export default function HomeScreen() {
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" />
       <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
-        
+
         {/* Header: اللوجو عاد من جديد */}
         <View style={styles.header}>
           <TouchableOpacity onPress={handleProfile}>
             <Ionicons name="person-circle-outline" size={32} color="#4A5568" />
           </TouchableOpacity>
-          
+
           <View style={styles.logoContainer}>
              <Ionicons name="footsteps" size={20} color="#4A90E2" style={{marginRight: 6}} />
              <Text style={styles.logoText}>
@@ -122,12 +71,12 @@ export default function HomeScreen() {
 
         {/* القسم الرئيسي: العداد */}
         <View style={styles.mainFocusContainer}>
-          <StepCounter steps={currentStepCount} goal={dailyGoal} size={260} />
-          
+          <StepCounter steps={steps} goal={dailyGoal} size={260} />
+
           <View style={styles.liveIndicator}>
-             <View style={[styles.dot, {backgroundColor: pedometerStatus === 'Active' ? '#4CAF50' : '#FF5252'}]} />
+             <View style={[styles.dot, {backgroundColor: trackingStatus === 'Live Tracking' ? '#4CAF50' : trackingStatus === 'Tracking Paused' ? '#FFA726' : '#FF5252'}]} />
              <Text style={styles.liveText}>
-               {pedometerStatus === 'Active' ? 'Live Tracking' : pedometerStatus}
+               {trackingStatus}
              </Text>
           </View>
         </View>
@@ -142,10 +91,10 @@ export default function HomeScreen() {
           <FeatureCard
             title="Health Metrics"
             description={`${calories} kcal | ${distance} km`}
-            icon="heart" 
+            icon="heart"
             colors={['#FF5252', '#D32F2F']}
             showChart={false}
-            onPress={() => {}}
+            onPress={() => router.push('/history')}
           />
 
            <FeatureCard
@@ -156,10 +105,34 @@ export default function HomeScreen() {
             rightIcon="chevron-forward"
             onPress={() => router.push('/(tabs)/rewards')}
           />
+
+          <FeatureCard
+            title="Media Library"
+            description="Listen while you walk."
+            icon="headset"
+            colors={['#4A90E2', '#357ABD']}
+            rightIcon="chevron-forward"
+            onPress={() => router.push('/media')}
+          />
+
+          <FeatureCard
+            title="Daily Dhikr"
+            description="A moment of remembrance."
+            icon="book"
+            colors={['#26A69A', '#00897B']}
+            rightIcon="chevron-forward"
+            onPress={() => setShowDhikr(true)}
+          />
         </View>
 
         <View style={styles.bottomSpacing} />
       </ScrollView>
+
+      <DhikrReminder
+        visible={showDhikr}
+        onDismiss={() => setShowDhikr(false)}
+        onComplete={() => setShowDhikr(false)}
+      />
     </SafeAreaView>
   );
 }
@@ -167,17 +140,17 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F8FAFC' },
   scrollView: { flex: 1, padding: 20 },
-  
-  header: { 
-    flexDirection: 'row', 
-    justifyContent: 'space-between', 
-    alignItems: 'center', 
-    marginBottom: 10 
+
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10
   },
-  
+
   // --- ستايل اللوجو الجديد ---
-  logoContainer: { 
-    flexDirection: 'row', 
+  logoContainer: {
+    flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#FFFFFF',
     paddingHorizontal: 12,
@@ -189,16 +162,16 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.05,
     elevation: 2
   },
-  logoText: { 
-    fontSize: 20, 
+  logoText: {
+    fontSize: 20,
     fontWeight: '800',
-    letterSpacing: 0.5 
+    letterSpacing: 0.5
   },
   // -------------------------
 
-  mainFocusContainer: { 
-    alignItems: 'center', 
-    marginVertical: 20 
+  mainFocusContainer: {
+    alignItems: 'center',
+    marginVertical: 20
   },
   liveIndicator: {
     flexDirection: 'row',
@@ -217,9 +190,9 @@ const styles = StyleSheet.create({
     alignItems: 'center'
   },
 
-  cardsContainer: { 
-    marginTop: 10, 
-    gap: 15 
+  cardsContainer: {
+    marginTop: 10,
+    gap: 15
   },
   bottomSpacing: { height: 40 },
 });

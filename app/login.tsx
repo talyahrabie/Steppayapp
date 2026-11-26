@@ -16,8 +16,13 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
-// استيراد مكتبة supabase (تأكد من المسار الصحيح لملفك)
-import { supabase } from '../lib/supabase'; 
+// استيراد مكتبة supabase (العميل الموحّد للمشروع السحابي)
+import { supabase } from '../lib/supabase';
+import {
+  signInWithSocialProvider,
+  isSocialAuthEnabled,
+  sendPasswordResetEmail,
+} from '../lib/auth';
 
 export default function LoginScreen() {
   const [isSignUp, setIsSignUp] = useState(false);
@@ -26,14 +31,65 @@ export default function LoginScreen() {
   const [loading, setLoading] = useState(false);
   const [showEmailForm, setShowEmailForm] = useState(false);
 
-  // تسجيل الدخول بواسطة جوجل (يحتاج إعدادات إضافية، سنتركه تنبيه حالياً)
-  const handleGoogleLogin = () => {
-    Alert.alert("Coming Soon", "Google login requires additional setup on Google Cloud Console.");
+  // تسجيل الدخول بواسطة جوجل — عبر Supabase OAuth.
+  // يعمل فقط بعد تفعيل موفّر Google في لوحة Supabase وضبط
+  // EXPO_PUBLIC_GOOGLE_AUTH_ENABLED=true في ملف .env — قبل ذلك يخبر
+  // المستخدم بصراحة أن الدخول بجوجل غير مُعدّ بعد، بدلاً من "قريباً".
+  const handleGoogleLogin = async () => {
+    if (!isSocialAuthEnabled('google')) {
+      Alert.alert(
+        'Google sign-in not configured',
+        'Google sign-in is not configured yet. Enable the Google provider in the Supabase dashboard and set EXPO_PUBLIC_GOOGLE_AUTH_ENABLED=true.'
+      );
+      return;
+    }
+    setLoading(true);
+    const result = await signInWithSocialProvider('google');
+    setLoading(false);
+    if (result.status === 'error') {
+      Alert.alert('Google Sign-In Error', result.message);
+    }
+    // عند النجاح، مستمع الجلسة في app/_layout.tsx ينقل المستخدم للتطبيق.
   };
 
-  // تسجيل الدخول بواسطة أبل (يحتاج إعدادات إضافية)
-  const handleAppleLogin = () => {
-    Alert.alert("Coming Soon", "Apple login requires an Apple Developer Account.");
+  // تسجيل الدخول بواسطة أبل — iOS فقط، وعبر Supabase OAuth أيضاً.
+  // ملحوظة للنشر: متجر آبل يتطلب تقديم Sign in with Apple عند وجود أي
+  // دخول اجتماعي آخر؛ فعّل موفّر Apple في بوابة Apple Developer وSupabase
+  // ثم اضبط EXPO_PUBLIC_APPLE_AUTH_ENABLED=true قبل الإطلاق.
+  const handleAppleLogin = async () => {
+    if (Platform.OS !== 'ios') {
+      Alert.alert('Apple sign-in', 'Apple sign-in is only available on iOS devices.');
+      return;
+    }
+    if (!isSocialAuthEnabled('apple')) {
+      Alert.alert(
+        'Apple sign-in not configured',
+        'Apple sign-in is not configured yet. Enable the Apple provider in the Supabase dashboard and set EXPO_PUBLIC_APPLE_AUTH_ENABLED=true.'
+      );
+      return;
+    }
+    setLoading(true);
+    const result = await signInWithSocialProvider('apple');
+    setLoading(false);
+    if (result.status === 'error') {
+      Alert.alert('Apple Sign-In Error', result.message);
+    }
+  };
+
+  // استعادة كلمة المرور — يرسل رابط إعادة تعيين إلى البريد المدخل
+  const handleForgotPassword = async () => {
+    if (!email) {
+      Alert.alert('Forgot Password', 'Enter your email address above first, then tap Forgot Password again.');
+      return;
+    }
+    setLoading(true);
+    const { error } = await sendPasswordResetEmail(email);
+    setLoading(false);
+    if (error) {
+      Alert.alert('Error', error);
+    } else {
+      Alert.alert('Check your email', 'We sent you a link to reset your password.');
+    }
   };
 
   // --- هذا هو الجزء المهم الذي تم تعديله ---
@@ -137,7 +193,7 @@ export default function LoginScreen() {
             </View>
 
             {!isSignUp && (
-              <TouchableOpacity style={styles.forgotPassword}>
+              <TouchableOpacity style={styles.forgotPassword} onPress={handleForgotPassword}>
                 <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
               </TouchableOpacity>
             )}
