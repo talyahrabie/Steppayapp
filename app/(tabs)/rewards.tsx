@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, SafeAreaView, StatusBar,
   TouchableOpacity, Image, Alert, Dimensions
@@ -7,7 +7,11 @@ import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useApp } from '../context/AppContext';
 import CategoryTabs from '../components/CategoryTabs';
 import { supabase } from '../../lib/supabase';
-import { recordRedemption } from '../../lib/redemptions';
+import {
+  createRedemptionRecord,
+  saveRedemptionLocal,
+  syncRedemption,
+} from '../../lib/redemptions';
 
 const { width } = Dimensions.get('window');
 
@@ -30,6 +34,14 @@ export default function RewardsScreen() {
   const currentBalance = points;
 
   const [activeCategory, setActiveCategory] = useState('all');
+
+  // In-flight lock: while one redemption is being confirmed/processed,
+  // no second one can start — a double-tap can never double-charge.
+  // (Second layer of defence: the ledger spend carries the redemption's
+  // idempotency id, so even a repeated spend call deducts only once.)
+  const redeemingRef = useRef(false);
+  const processingRef = useRef(false);
+  const [redeeming, setRedeeming] = useState(false);
 
   const categories = [
     { id: 'all', label: isAr ? 'الكل' : 'All', icon: 'apps' as const, color: '#4A90E2' },
@@ -79,6 +91,8 @@ export default function RewardsScreen() {
   const filteredRewards = activeCategory === 'all' ? rewards : rewards.filter(r => r.category === activeCategory);
 
   const handleRedeem = (item: RewardItem) => {
+    // قفل فوري ضد النقر المزدوج — يُقفل قبل فتح نافذة التأكيد نفسها
+    if (redeemingRef.current) return;
     if (currentBalance < item.cost) {
       Alert.alert(
         isAr ? 'رصيد غير كافٍ' : 'Insufficient balance',
@@ -87,39 +101,64 @@ export default function RewardsScreen() {
       return;
     }
 
+    redeemingRef.current = true;
+    setRedeeming(true);
+    const releaseLock = () => {
+      // Never release while a confirmed redemption is still processing
+      // (Alert onDismiss also fires after a button press on Android).
+      if (processingRef.current) return;
+      redeemingRef.current = false;
+      setRedeeming(false);
+    };
+
     Alert.alert(
       isAr ? 'تأكيد الاستبدال' : 'Confirm redemption',
       isAr
         ? `سيتم خصم ${item.cost} نقطة من رصيدك مقابل ${item.title}.`
         : `${item.cost} points will be deducted from your balance for ${item.title}.`,
       [
-        { text: isAr ? 'إلغاء' : 'Cancel', style: 'cancel' },
+        { text: isAr ? 'إلغاء' : 'Cancel', style: 'cancel', onPress: releaseLock },
         {
           text: isAr ? 'استبدال' : 'Redeem',
           onPress: async () => {
-            // 1) خصم فعلي من الرصيد — يفشل لو الرصيد لا يكفي
-            const deducted = spendPoints(item.cost);
-            if (!deducted) {
+            processingRef.current = true;
+            try {
+              // 1) إنشاء سجل الاستبدال أولًا بهوية عدم تكرار (idempotency id)
+              const record = createRedemptionRecord({
+                id: item.id,
+                title: item.title,
+                cost: item.cost,
+              });
+              // 2) خصم فعلي من سجل النقاط مرتبط بهوية السجل — يُفحص الرصيد
+              //    لحظة التأكيد، ويستحيل خصمه مرتين لنفس الاستبدال
+              const deducted = spendPoints(item.cost, record.id);
+              if (!deducted) {
+                Alert.alert(
+                  isAr ? 'رصيد غير كافٍ' : 'Insufficient balance',
+                  isAr ? 'تحتاج إلى نقاط أكثر لاستبدال هذه المكافأة.' : 'You need more points to redeem this reward.'
+                );
+                return;
+              }
+              // 3) حفظ محلي كـ "قيد المزامنة"، ثم محاولة مزامنة سحابية —
+              //    لو فشلت (لا يوجد اتصال) يبقى الخصم محفوظًا وتُعاد
+              //    المزامنة تلقائيًا لاحقًا بنفس الهوية دون تكرار
+              await saveRedemptionLocal(record);
+              const { data } = await supabase.auth.getSession();
+              await syncRedemption(record, data.session?.user?.id ?? null);
+              // 4) نجاح حقيقي بعد الخصم والحفظ فقط
               Alert.alert(
-                isAr ? 'رصيد غير كافٍ' : 'Insufficient balance',
-                isAr ? 'تحتاج إلى نقاط أكثر لاستبدال هذه المكافأة.' : 'You need more points to redeem this reward.'
+                isAr ? 'مبروك!' : 'Congrats!',
+                isAr ? `تم استبدال ${item.title} بنجاح` : `You redeemed ${item.title}`
               );
-              return;
+            } finally {
+              processingRef.current = false;
+              redeemingRef.current = false;
+              setRedeeming(false);
             }
-            // 2) تسجيل العملية محليًا وفي قاعدة البيانات عند تسجيل الدخول
-            const { data } = await supabase.auth.getSession();
-            await recordRedemption(
-              { id: item.id, title: item.title, cost: item.cost },
-              data.session?.user?.id ?? null
-            );
-            // 3) نجاح حقيقي بعد الخصم والتسجيل فقط
-            Alert.alert(
-              isAr ? 'مبروك!' : 'Congrats!',
-              isAr ? `تم استبدال ${item.title} بنجاح` : `You redeemed ${item.title}`
-            );
           },
         },
-      ]
+      ],
+      { onDismiss: releaseLock }
     );
   };
 
@@ -173,7 +212,11 @@ export default function RewardsScreen() {
 
                             <View style={styles.cardFooter}>
                                 {canAfford ? (
-                                    <TouchableOpacity style={styles.redeemButton} onPress={() => handleRedeem(item)}>
+                                    <TouchableOpacity
+                                        style={[styles.redeemButton, redeeming && { opacity: 0.5 }]}
+                                        onPress={() => handleRedeem(item)}
+                                        disabled={redeeming}
+                                    >
                                         <Text style={styles.redeemText}>{isAr ? 'استبدال' : 'Redeem'}</Text>
                                         <Ionicons name={isAr ? "arrow-back-circle" : "arrow-forward-circle"} size={20} color="#FFF" />
                                     </TouchableOpacity>

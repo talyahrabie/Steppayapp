@@ -1,6 +1,21 @@
 import React, { createContext, useState, useContext, useEffect, useRef } from 'react';
+import { AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { stepsToPoints, levelForXp } from '../../lib/config';
+import {
+  LedgerEntry,
+  appendEarnEntry,
+  balanceFromLedger,
+  buildMigrationLedger,
+  loadLedger,
+  makeLedgerId,
+  persistLedger,
+  tryAppendSpend,
+  xpFromLedger,
+} from '../../lib/pointsLedger';
+import { supabase } from '../../lib/supabase';
+import { syncPendingRedemptions } from '../../lib/redemptions';
+import { flushPendingDaySyncs } from '../../lib/stepHistory';
 
 type AppContextType = {
   theme: 'light' | 'dark';
@@ -24,8 +39,13 @@ type AppContextType = {
   toggleDhikrReminders: () => void;
   toggleSoundEnabled: () => void;
   addSteps: (count: number) => void;
-  /** Deduct points for a redemption. Returns false when balance is too low. */
-  spendPoints: (cost: number) => boolean;
+  /**
+   * Deduct points for a redemption by appending a spend entry to the
+   * ledger. Returns false when the balance is too low OR when a spend
+   * with the same `ref` (redemption id) was already recorded — so one
+   * redemption can never deduct twice.
+   */
+  spendPoints: (cost: number, ref?: string) => boolean;
   changeLanguage: (lang: 'en' | 'ar') => void;
   t: (key: string) => string;
   colors: any;
@@ -153,13 +173,47 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
   const [xp, setXp] = useState(0);
   const [level, setLevel] = useState('Bronze');
 
-  // Mirror of the progress counters so addSteps/spendPoints always compute
+  // Mirror of the progress state so addSteps/spendPoints always compute
   // from the latest values (the previous implementation read stale state
-  // and could lose updates when called in quick succession).
-  const progressRef = useRef({ steps: 0, points: 0, xp: 0 });
+  // and could lose updates when called in quick succession). Points and
+  // XP are DERIVED from the append-only ledger held here — the balance
+  // can never drift from the recorded earn/spend entries.
+  const progressRef = useRef<{ steps: number; ledger: LedgerEntry[] }>({
+    steps: 0,
+    ledger: [],
+  });
 
   useEffect(() => {
     loadSettings();
+  }, []);
+
+  // Retry queued cloud syncs (pending redemptions, failed daily-steps
+  // upserts) whenever a signed-in session is available: at app start, on
+  // sign-in, and whenever the app returns to the foreground. Retries are
+  // idempotent on both sides, so running this often is safe.
+  useEffect(() => {
+    const retryPendingSyncs = async () => {
+      try {
+        const { data } = await supabase.auth.getSession();
+        const userId = data.session?.user?.id;
+        if (!userId) return;
+        await syncPendingRedemptions(userId);
+        await flushPendingDaySyncs(userId);
+      } catch (e) {
+        console.log('Pending sync retry failed:', e);
+      }
+    };
+    retryPendingSyncs();
+    const { data: authListener } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'SIGNED_IN') retryPendingSyncs();
+    });
+    const appStateSub = AppState.addEventListener('change', (next) => {
+      if (next === 'active') retryPendingSyncs();
+    });
+    return () => {
+      authListener.subscription.unsubscribe();
+      appStateSub.remove();
+    };
   }, []);
 
   useEffect(() => {
@@ -191,26 +245,47 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
         ? (parseInt(saved[KEYS.points] as string, 10) || 0)
         : stepsToPoints(savedSteps);
 
-      progressRef.current = { steps: savedSteps, points: savedPoints, xp: savedXp };
+      // Points ledger: load it, or migrate the legacy balance/XP numbers
+      // into it exactly once. From now on the balance is derived from the
+      // ledger entries, never stored as a mutable number.
+      let ledger = await loadLedger();
+      if (ledger === null) {
+        ledger = buildMigrationLedger(savedXp, savedPoints);
+        await persistLedger(ledger);
+      }
+
+      progressRef.current = { steps: savedSteps, ledger };
       setSteps(savedSteps);
-      setPoints(savedPoints);
-      setXp(savedXp);
+      setPoints(balanceFromLedger(ledger));
+      setXp(xpFromLedger(ledger));
     } catch (e) { console.log(e); }
   };
 
   const persistProgress = async () => {
+    const { steps, ledger } = progressRef.current;
+    // Ledger writes are serialized inside persistLedger.
+    void persistLedger(ledger);
     try {
+      // Legacy keys are kept in sync as a mirror for older builds.
       await AsyncStorage.multiSet([
-        [KEYS.totalSteps, progressRef.current.steps.toString()],
-        [KEYS.points, progressRef.current.points.toString()],
-        [KEYS.xp, progressRef.current.xp.toString()],
+        [KEYS.totalSteps, steps.toString()],
+        [KEYS.points, balanceFromLedger(ledger).toString()],
+        [KEYS.xp, xpFromLedger(ledger).toString()],
       ]);
     } catch (e) { console.log(e); }
+  };
+
+  /** Push the derived counters from the ledger into React state. */
+  const publishLedger = () => {
+    setPoints(balanceFromLedger(progressRef.current.ledger));
+    setXp(xpFromLedger(progressRef.current.ledger));
   };
 
   /**
    * Add newly walked steps. Points/XP are earned at the single global rate
    * (lib/config.ts): every STEPS_PER_POINT lifetime steps earns 1 point.
+   * Earnings are appended to the ledger as ONE entry per addSteps batch
+   * (a watch-event delta or a sensor catch-up), never per step.
    */
   const addSteps = (count: number) => {
     if (!count || count <= 0) return;
@@ -219,21 +294,31 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
     const earnedDelta = stepsToPoints(newSteps) - stepsToPoints(prev.steps);
     progressRef.current = {
       steps: newSteps,
-      points: prev.points + earnedDelta,
-      xp: prev.xp + earnedDelta,
+      ledger: earnedDelta > 0
+        ? appendEarnEntry(prev.ledger, earnedDelta, 'steps')
+        : prev.ledger,
     };
     setSteps(progressRef.current.steps);
-    setPoints(progressRef.current.points);
-    setXp(progressRef.current.xp);
+    publishLedger();
     persistProgress();
   };
 
-  /** Deduct points for a redemption. Returns false if the balance is too low. */
-  const spendPoints = (cost: number): boolean => {
-    if (cost <= 0) return false;
-    if (progressRef.current.points < cost) return false;
-    progressRef.current = { ...progressRef.current, points: progressRef.current.points - cost };
-    setPoints(progressRef.current.points);
+  /**
+   * Deduct points for a redemption by appending a ledger spend entry.
+   * `ref` should be the redemption's idempotency id: a second call with
+   * the same ref is rejected, so a redemption deducts exactly once.
+   * Returns false when the balance (checked against the ledger at call
+   * time) is too low.
+   */
+  const spendPoints = (cost: number, ref?: string): boolean => {
+    const next = tryAppendSpend(
+      progressRef.current.ledger,
+      cost,
+      ref ?? makeLedgerId('spend')
+    );
+    if (next === null) return false;
+    progressRef.current = { ...progressRef.current, ledger: next };
+    publishLedger();
     persistProgress();
     return true;
   };

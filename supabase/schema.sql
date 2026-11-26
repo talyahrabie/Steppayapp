@@ -8,7 +8,7 @@
 --
 -- Column names/types match exactly what the app sends:
 --   lib/stepHistory.ts  → daily_steps upsert (on conflict user_id, date)
---   lib/redemptions.ts  → redemptions insert
+--   lib/redemptions.ts  → redemptions upsert (on conflict user_id, client_id)
 -- ─────────────────────────────────────────────────────────────────────────────
 
 create table if not exists public.daily_steps (
@@ -31,8 +31,16 @@ create table if not exists public.redemptions (
   reward_id     text not null,
   reward_title  text not null,
   points_spent  integer not null,
+  -- Client-generated idempotency id: the app upserts on
+  -- (user_id, client_id), so a retried sync can never duplicate a row.
+  client_id     text,
   created_at    timestamptz not null default now()
 );
+
+-- For installs created before client_id existed (safe to re-run):
+alter table public.redemptions add column if not exists client_id text;
+create unique index if not exists redemptions_user_client_uidx
+  on public.redemptions (user_id, client_id);
 
 -- ── Row Level Security ───────────────────────────────────────────────────────
 alter table public.daily_steps enable row level security;

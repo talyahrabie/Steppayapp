@@ -20,6 +20,14 @@ import {
 
 const HISTORY_KEY = 'step_history_v1';
 
+/**
+ * Date keys whose cloud sync has been attempted and FAILED (offline,
+ * server error, …). Persisted so a failed upsert is never silently
+ * dropped: `flushPendingDaySyncs` retries them on the next app start,
+ * sign-in or foreground until they succeed.
+ */
+const PENDING_SYNC_KEY = 'step_history_pending_sync_v1';
+
 export interface DayRecord {
   /** Local date key, `YYYY-MM-DD`. */
   date: string;
@@ -86,10 +94,49 @@ export async function getHistoryRange(days: number): Promise<DayRecord[]> {
   return records;
 }
 
+/** Date keys still waiting for a successful cloud sync. */
+export async function getPendingSyncDates(): Promise<string[]> {
+  try {
+    const raw = await AsyncStorage.getItem(PENDING_SYNC_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((d) => typeof d === 'string') : [];
+  } catch (e) {
+    console.log('Error reading pending step syncs:', e);
+    return [];
+  }
+}
+
+async function setPendingSyncDates(dates: string[]): Promise<void> {
+  try {
+    await AsyncStorage.setItem(PENDING_SYNC_KEY, JSON.stringify(dates));
+  } catch (e) {
+    console.log('Error saving pending step syncs:', e);
+  }
+}
+
+async function markDayPendingSync(dateKey: string): Promise<void> {
+  const pending = await getPendingSyncDates();
+  if (!pending.includes(dateKey)) {
+    await setPendingSyncDates([...pending, dateKey]);
+  }
+}
+
+async function clearDayPendingSync(dateKey: string): Promise<void> {
+  const pending = await getPendingSyncDates();
+  if (pending.includes(dateKey)) {
+    await setPendingSyncDates(pending.filter((d) => d !== dateKey));
+  }
+}
+
 /**
  * Upsert one day into the Supabase `daily_steps` table.
- * Returns true on success; failures are logged and swallowed so step
- * tracking never breaks because of a network problem.
+ *
+ * The upsert is keyed by (user_id, date), so retrying it is idempotent —
+ * it can never create a duplicate row. Returns true on success. On
+ * failure the day is added to the persisted pending-sync queue (see
+ * `flushPendingDaySyncs`) instead of being silently dropped; failures are
+ * still swallowed so step tracking never breaks because of the network.
  */
 export async function syncDayToSupabase(
   userId: string,
@@ -112,13 +159,31 @@ export async function syncDayToSupabase(
     );
     if (error) {
       console.log('Error syncing daily steps:', error.message);
+      await markDayPendingSync(dateKey);
       return false;
     }
+    await clearDayPendingSync(dateKey);
     return true;
   } catch (e) {
     console.log('Error syncing daily steps:', e);
+    await markDayPendingSync(dateKey);
     return false;
   }
+}
+
+/**
+ * Retry every queued day sync with the day's current local total.
+ * Called on app start, sign-in and foreground. Returns how many days
+ * were successfully synced.
+ */
+export async function flushPendingDaySyncs(userId: string): Promise<number> {
+  const pending = await getPendingSyncDates();
+  let synced = 0;
+  for (const dateKey of pending) {
+    const steps = await getDaySteps(dateKey);
+    if (await syncDayToSupabase(userId, dateKey, steps)) synced += 1;
+  }
+  return synced;
 }
 
 /**
