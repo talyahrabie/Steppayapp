@@ -100,7 +100,13 @@ const translations: any = {
     badge_warrior: "Distance Hero",
     badge_pro: "Pro Athlete",
     badge_desc: "Steps",
-    current_level: "Current Level"
+    current_level: "Current Level",
+    media_cat_all: "All",
+    media_cat_running: "Running",
+    media_cat_workout: "Workout",
+    media_cat_relaxing: "Relaxing",
+    media_cat_quran: "Quran",
+    media_cat_azkar: "Azkar"
   },
   ar: {
     nav_home: "الرئيسية",
@@ -143,7 +149,13 @@ const translations: any = {
     badge_warrior: "بطل المسافات",
     badge_pro: "الرياضي المحترف",
     badge_desc: "خطوة",
-    current_level: "مستواك الحالي"
+    current_level: "مستواك الحالي",
+    media_cat_all: "الكل",
+    media_cat_running: "الجري",
+    media_cat_workout: "التمرين",
+    media_cat_relaxing: "الاسترخاء",
+    media_cat_quran: "القرآن",
+    media_cat_azkar: "الأذكار"
   }
 };
 
