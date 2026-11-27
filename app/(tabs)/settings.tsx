@@ -23,8 +23,8 @@ interface SettingItem {
 export default function SettingsScreen() {
   const router = useRouter();
   const {
-    theme, language, stepTracking, autoSync, pushNotifications, dhikrReminders, soundEnabled,
-    toggleTheme, toggleStepTracking, toggleAutoSync, togglePushNotifications,
+    theme, language, stepTracking, autoSync, healthSync, pushNotifications, dhikrReminders, soundEnabled,
+    toggleTheme, toggleStepTracking, toggleAutoSync, toggleHealthSync, togglePushNotifications,
     toggleDhikrReminders, toggleSoundEnabled, changeLanguage, t, colors
   } = useApp();
   const isDark = theme === 'dark';
@@ -90,6 +90,16 @@ export default function SettingsScreen() {
       onPress: toggleAutoSync,
       description: t('auto_sync_desc'),
       color: '#2196F3'
+    },
+    {
+      id: 'health',
+      label: t('health_sync'),
+      icon: 'heart',
+      type: 'toggle',
+      value: healthSync,
+      onPress: toggleHealthSync,
+      description: healthSync ? t('health_sync_desc_on') : t('health_sync_desc_off'),
+      color: '#E91E63'
     },
   ];
 

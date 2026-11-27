@@ -32,6 +32,7 @@
       },
       "permissions": [
         "android.permission.ACTIVITY_RECOGNITION",
+        "android.permission.health.READ_STEPS",
         "android.permission.INTERNET",
         "android.permission.READ_EXTERNAL_STORAGE",
         "android.permission.WRITE_EXTERNAL_STORAGE",
@@ -46,10 +47,25 @@
     "plugins": [
       "expo-router",
       [
+        "expo-notifications",
+        {
+          "color": "#0A1E3C"
+        }
+      ],
+      "@sentry/react-native/expo",
+      [
         "expo-image-picker",
         {
           "photosPermission": "يحتاج التطبيق للوصول إلى الصور لتتمكن من تغيير صورة ملفك الشخصي.",
           "cameraPermission": "يحتاج التطبيق للوصول إلى الكاميرا لتتمكن من التقاط صورة لملفك الشخصي."
+        }
+      ],
+      "react-native-health-connect",
+      [
+        "@kingstinct/react-native-healthkit",
+        {
+          "NSHealthShareUsageDescription": "نستخدم بيانات الخطوات من Apple Health لاحتساب خطواتك ومكافأتك عليها حتى عندما يكون التطبيق مغلقًا",
+          "NSHealthUpdateUsageDescription": false
         }
       ]
     ],

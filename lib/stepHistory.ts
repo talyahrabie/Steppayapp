@@ -7,6 +7,10 @@ import {
   stepsToPoints,
   toDateKey,
 } from './config';
+import {
+  getUnsyncedStepFlags,
+  markStepFlagsSynced,
+} from './antiCheat';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Daily step history.
@@ -163,6 +167,11 @@ export async function syncDayToSupabase(
       return false;
     }
     await clearDayPendingSync(dateKey);
+    // Attach the day's anti-cheat flags for server review. Flag sync is
+    // best-effort: it must never fail the day sync itself (the
+    // `step_flags` table only exists once the owner has re-run
+    // supabase/schema.sql), so its result is deliberately ignored here.
+    await syncStepFlags(userId, dateKey).catch(() => 0);
     return true;
   } catch (e) {
     console.log('Error syncing daily steps:', e);
@@ -183,7 +192,58 @@ export async function flushPendingDaySyncs(userId: string): Promise<number> {
     const steps = await getDaySteps(dateKey);
     if (await syncDayToSupabase(userId, dateKey, steps)) synced += 1;
   }
+  // Also retry any anti-cheat flags that never reached the server.
+  await flushPendingStepFlags(userId).catch(() => 0);
   return synced;
+}
+
+/**
+ * Upsert locally stored anti-cheat flags (lib/antiCheat.ts) into the
+ * Supabase `step_flags` table for server review. The upsert is keyed by
+ * (user_id, client_id) — client_id is the flag's own id — so retries
+ * can never duplicate a row. Flags are marked synced only after the
+ * server accepts them. Returns how many flags were synced.
+ *
+ * Failures are swallowed (offline, or the table does not exist yet
+ * because the owner has not re-run schema.sql): the flags stay queued
+ * locally and are retried by the next day sync / flush.
+ */
+export async function syncStepFlags(userId: string, dateKey?: string): Promise<number> {
+  if (!isSupabaseConfigured) return 0;
+  const flags = await getUnsyncedStepFlags(dateKey);
+  if (flags.length === 0) return 0;
+  let synced = 0;
+  for (const flag of flags) {
+    try {
+      const { error } = await supabase.from('step_flags').upsert(
+        {
+          user_id: userId,
+          date: flag.date,
+          reason: flag.reason,
+          reported_steps: flag.reportedSteps,
+          credited_steps: flag.creditedSteps,
+          flagged_steps: flag.flaggedSteps,
+          client_id: flag.id,
+          created_at: flag.createdAt,
+        },
+        { onConflict: 'user_id,client_id' }
+      );
+      if (error) {
+        console.log('Error syncing step flag:', error.message);
+        continue;
+      }
+      await markStepFlagsSynced([flag.id]);
+      synced += 1;
+    } catch (e) {
+      console.log('Error syncing step flag:', e);
+    }
+  }
+  return synced;
+}
+
+/** Retry every unsynced anti-cheat flag, across all dates. */
+export async function flushPendingStepFlags(userId: string): Promise<number> {
+  return syncStepFlags(userId);
 }
 
 /**

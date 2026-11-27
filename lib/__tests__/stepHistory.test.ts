@@ -6,6 +6,13 @@ import {
   recordDaySteps,
   syncDayToSupabase,
 } from '../stepHistory';
+import {
+  appendStepFlags,
+  emptyAntiCheatState,
+  getUnsyncedStepFlags,
+  validateStepCredit,
+} from '../antiCheat';
+import { startOfDayKey } from '../stepEngine';
 
 jest.mock('../supabase', () => ({
   isSupabaseConfigured: true,
@@ -63,5 +70,56 @@ describe('syncDayToSupabase pending queue', () => {
     await syncDayToSupabase(USER_ID, '2026-11-25', 7000);
     expect(await flushPendingDaySyncs(USER_ID)).toBe(0);
     expect(await getPendingSyncDates()).toEqual(['2026-11-25']);
+  });
+});
+
+describe('anti-cheat step flag sync', () => {
+  it('a successful day sync also uploads the day flags and marks them synced', async () => {
+    const res = validateStepCredit(
+      emptyAntiCheatState(),
+      { delta: 70000, dateKey: '2026-11-25', atMs: startOfDayKey('2026-11-25').getTime() + 1380 * 60000 },
+      undefined,
+      'flag-upload',
+      '2026-11-25T23:00:00.000Z'
+    );
+    await appendStepFlags([res.flag!]);
+    expect(await getUnsyncedStepFlags()).toHaveLength(1);
+
+    expect(await syncDayToSupabase(USER_ID, '2026-11-25', 60000)).toBe(true);
+
+    // The flag row went up keyed for idempotent retries…
+    expect(mockUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        user_id: USER_ID,
+        date: '2026-11-25',
+        reason: 'day_cap_exceeded',
+        flagged_steps: 10000,
+        client_id: 'flag-upload',
+      }),
+      expect.objectContaining({ onConflict: 'user_id,client_id' })
+    );
+    // …and is marked synced locally so it is never sent twice.
+    expect(await getUnsyncedStepFlags()).toHaveLength(0);
+  });
+
+  it('a failing flag upload never fails the day sync and stays queued', async () => {
+    const res = validateStepCredit(
+      emptyAntiCheatState(),
+      { delta: 70000, dateKey: '2026-11-25', atMs: startOfDayKey('2026-11-25').getTime() + 1380 * 60000 },
+      undefined,
+      'flag-stuck',
+      '2026-11-25T23:00:00.000Z'
+    );
+    await appendStepFlags([res.flag!]);
+
+    // Day upsert succeeds; flag upsert fails (e.g. step_flags table not
+    // created yet because schema.sql has not been re-run).
+    mockUpsert
+      .mockResolvedValueOnce({ error: null })
+      .mockResolvedValue({ error: { message: 'relation "step_flags" does not exist' } });
+
+    expect(await syncDayToSupabase(USER_ID, '2026-11-25', 60000)).toBe(true);
+    expect(await getPendingSyncDates()).toEqual([]);
+    expect(await getUnsyncedStepFlags()).toHaveLength(1);
   });
 });

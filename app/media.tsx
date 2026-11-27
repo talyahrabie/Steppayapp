@@ -15,6 +15,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { Audio } from 'expo-av';
 import { useApp } from './context/AppContext';
+import { trackEvent } from '../lib/analytics';
 
 interface Track {
   id: string;
@@ -345,6 +346,8 @@ export default function MediaScreen() {
       );
       soundRef.current = sound;
       setIsPlaying(true);
+      // Analytics: a track actually started playing (category only).
+      trackEvent('media_played', { category: track.category });
       sound.setOnPlaybackStatusUpdate((status) => {
         if (status.isLoaded) {
           setIsPlaying(status.isPlaying);

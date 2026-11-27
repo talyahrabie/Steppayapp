@@ -107,3 +107,71 @@ export function endOfDayKey(dateKey: string): Date {
   d.setHours(23, 59, 59, 999);
   return d;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Health-platform totals (Apple HealthKit / Android Health Connect).
+//
+// The health platform is a SECOND authoritative day-total source alongside
+// the pedometer provider (`getStepCountAsync`). It keeps counting while
+// the app is closed and also aggregates companion devices (watches), so
+// its total can legitimately EXCEED the pedometer provider's. The two
+// totals describe the same walking, though — they must never be ADDED
+// together. The merge rule is therefore the catch-up rule applied to
+// every candidate: the accounted total moves UP to the highest reported
+// total, never down, and only the difference is newly creditable. That
+// makes a health catch-up credit the difference exactly once (the
+// accounted total becomes the health total, so the next merge sees no
+// difference), and a health total BELOW the accounted total credits
+// nothing — never a negative amount.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Which authoritative source the engine should prefer for day totals. */
+export type StepSourceKind = 'health' | 'pedometer';
+
+export interface HealthSourceStatus {
+  /** The native health module exists and the platform health store is usable. */
+  available: boolean;
+  /** The user has granted read access to step data. */
+  granted: boolean;
+}
+
+/**
+ * Decide the primary day-total source. Health wins when it is available
+ * AND granted (it counts while the app is closed); otherwise the engine
+ * falls back to the pedometer provider — the pre-health-sync behaviour.
+ * Returns null when neither source can provide totals (watch deltas are
+ * then the only input).
+ */
+export function resolvePrimarySource(
+  health: HealthSourceStatus,
+  pedometerAvailable: boolean
+): StepSourceKind | null {
+  if (health.available && health.granted) return 'health';
+  if (pedometerAvailable) return 'pedometer';
+  return null;
+}
+
+/**
+ * Reconcile the accounted total for a day against several authoritative
+ * candidate totals (pedometer provider, health platform, …). Candidates
+ * that are null/undefined (source unavailable, permission denied, read
+ * failed) are ignored. The result is the same shape as
+ * {@link applySensorCatchUp}: the accounted total moves up to the highest
+ * candidate, and `newSteps` is exactly the not-yet-accounted difference
+ * (never negative).
+ */
+export function mergeDailyTotals(
+  accountedToday: number,
+  candidates: readonly (number | null | undefined)[]
+): SensorCatchUp {
+  let merged: SensorCatchUp = {
+    todayTotal: Math.max(0, Math.floor(accountedToday)),
+    newSteps: 0,
+  };
+  for (const candidate of candidates) {
+    if (candidate === null || candidate === undefined) continue;
+    merged = applySensorCatchUp(merged.todayTotal, candidate);
+  }
+  const accounted = Math.max(0, Math.floor(accountedToday));
+  return { todayTotal: merged.todayTotal, newSteps: merged.todayTotal - accounted };
+}

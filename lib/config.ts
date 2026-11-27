@@ -20,6 +20,31 @@ export const STEP_LENGTH_METERS = 0.762;
 /** Average calories burned per step. */
 export const CALORIES_PER_STEP = 0.04;
 
+// ── Anti-cheat plausibility rules (lib/antiCheat.ts) ────────────────────────
+// Server-plausibility limits applied BEFORE steps are credited as points.
+// They are deliberately generous — an elite ultrarunner stays well inside
+// them — so a legitimate user never loses honestly-earned steps; only
+// sensor spoofing / shake-to-earn abuse trips them. Amounts above the
+// limits are not credited; they are flagged for server review instead.
+
+/** Maximum steps per day that can earn points. */
+export const MAX_PLAUSIBLE_STEPS_PER_DAY = 60000;
+
+/**
+ * Maximum sustained stepping rate used for plausibility: 250 steps/min is
+ * above the cadence of elite sprinters (~240 spm) and far above distance
+ * running (~180 spm), so real activity — including catch-up batches —
+ * never sustains above it.
+ */
+export const MAX_PLAUSIBLE_STEPS_PER_MINUTE = 250;
+
+/**
+ * Instant burst allowance: steps creditable at any moment regardless of
+ * the time-based ceiling. Absorbs sensor batching (the OS delivering a
+ * backlog of readings in one event) without weakening the sustained cap.
+ */
+export const STEP_CREDIT_BURST_ALLOWANCE = 1500;
+
 /** Convert a step count into whole points (the one and only rate). */
 export const stepsToPoints = (steps: number): number =>
   Math.floor(Math.max(0, steps) / STEPS_PER_POINT);

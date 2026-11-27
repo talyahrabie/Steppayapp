@@ -3,6 +3,8 @@ import {
   computeWatchDelta,
   endOfDayKey,
   isDayRollover,
+  mergeDailyTotals,
+  resolvePrimarySource,
   startOfDayKey,
 } from '../stepEngine';
 
@@ -142,5 +144,87 @@ describe('midnight rollover attribution', () => {
     expect(perDay['2026-11-25']).toBe(5000);
     // 20 from the OS catch-up seed + 100 of post-baseline deltas.
     expect(perDay['2026-11-26']).toBe(120);
+  });
+});
+
+describe('mergeDailyTotals — health platform as a second authoritative source', () => {
+  it('health total higher than the pedometer total credits the difference exactly once', () => {
+    // Watch deltas accounted 5,000; pedometer provider says 5,300;
+    // Health Connect (which also saw the user's watch) says 6,800.
+    const first = mergeDailyTotals(5000, [5300, 6800]);
+    expect(first).toEqual({ todayTotal: 6800, newSteps: 1800 });
+
+    // The accounted total is now the health total, so re-running the
+    // same merge (next foreground) credits nothing more — no double
+    // counting of the health catch-up.
+    const second = mergeDailyTotals(first.todayTotal, [5300, 6800]);
+    expect(second).toEqual({ todayTotal: 6800, newSteps: 0 });
+  });
+
+  it('health total lower than accounted never credits a negative amount', () => {
+    // Health only has partial data (e.g. phone-only, no watch sync yet).
+    expect(mergeDailyTotals(6800, [5300, 4000])).toEqual({
+      todayTotal: 6800,
+      newSteps: 0,
+    });
+    expect(mergeDailyTotals(6800, [null, 4000])).toEqual({
+      todayTotal: 6800,
+      newSteps: 0,
+    });
+  });
+
+  it('ignores sources that cannot answer (null/undefined)', () => {
+    expect(mergeDailyTotals(2000, [null, undefined])).toEqual({
+      todayTotal: 2000,
+      newSteps: 0,
+    });
+    expect(mergeDailyTotals(2000, [null, 2600])).toEqual({
+      todayTotal: 2600,
+      newSteps: 600,
+    });
+  });
+
+  it('recovers a full day walked while the app was dead, from health alone', () => {
+    // App never ran today; the health platform counted everything.
+    expect(mergeDailyTotals(0, [null, 12345])).toEqual({
+      todayTotal: 12345,
+      newSteps: 12345,
+    });
+  });
+
+  it('day rollover with a health source: each day merges against its own total', () => {
+    // Mirrors the hook: `accounted` is per-day state, reset at rollover;
+    // close-out merges the old day, the new day starts from zero and
+    // merges against the NEW day's (small) health total — yesterday's
+    // health total must not leak into today.
+    const day1 = mergeDailyTotals(0, [8200, 9000]); // health saw the watch too
+    expect(day1).toEqual({ todayTotal: 9000, newSteps: 9000 });
+
+    const day2 = mergeDailyTotals(0, [150, 300]);
+    expect(day2).toEqual({ todayTotal: 300, newSteps: 300 });
+
+    // A late re-merge of day 1 (close-out retry) is unaffected by day 2.
+    const day1Again = mergeDailyTotals(day1.todayTotal, [8200, 9000]);
+    expect(day1Again).toEqual({ todayTotal: 9000, newSteps: 0 });
+  });
+});
+
+describe('resolvePrimarySource — permission-denied fallback', () => {
+  it('prefers health when it is available and granted', () => {
+    expect(resolvePrimarySource({ available: true, granted: true }, true)).toBe('health');
+    expect(resolvePrimarySource({ available: true, granted: true }, false)).toBe('health');
+  });
+
+  it('falls back to the pedometer when health permission is denied', () => {
+    expect(resolvePrimarySource({ available: true, granted: false }, true)).toBe('pedometer');
+  });
+
+  it('falls back to the pedometer when the health module is absent (Expo Go)', () => {
+    expect(resolvePrimarySource({ available: false, granted: false }, true)).toBe('pedometer');
+  });
+
+  it('returns null when neither source can provide totals', () => {
+    expect(resolvePrimarySource({ available: false, granted: false }, false)).toBeNull();
+    expect(resolvePrimarySource({ available: true, granted: false }, false)).toBeNull();
   });
 });

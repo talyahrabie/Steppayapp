@@ -1,10 +1,22 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { Session } from '@supabase/supabase-js';
 import { AppProvider } from './context/AppContext';
+import { AppErrorBoundary } from './components/AppErrorBoundary';
 import { supabase } from '../lib/supabase';
 import { ONBOARDING_SEEN_KEY } from '../lib/config';
+import { initSentry, wrapWithSentry } from '../lib/sentry';
+import {
+  addNotificationTapListener,
+  getColdStartNotificationRoute,
+  initNotificationHandler,
+} from '../lib/notifications';
+
+// Crash reporting: a no-op unless EXPO_PUBLIC_SENTRY_DSN is set.
+// Notification handler: how notifications present in the foreground.
+initSentry();
+initNotificationHandler();
 
 // Routes reachable without a session (after onboarding has been seen).
 const PUBLIC_ROUTES = new Set(['login', 'onboarding', 'privacy', 'terms_of_service', 'info-page']);
@@ -24,6 +36,22 @@ function AuthGate() {
   const [ready, setReady] = useState(false);
   const [session, setSession] = useState<Session | null>(null);
   const [onboardingSeen, setOnboardingSeen] = useState(false);
+  /** Route requested by a notification tap, waiting for the auth gate. */
+  const pendingNotifRouteRef = useRef<string | null>(null);
+
+  // Notification taps: warm taps navigate immediately; a tap that
+  // cold-started the app is held until the gate lets the user in, then
+  // honoured once (see the navigation effect below).
+  useEffect(() => {
+    const sub = addNotificationTapListener((route) => {
+      pendingNotifRouteRef.current = route;
+      router.push(route as any);
+    });
+    getColdStartNotificationRoute().then((route) => {
+      if (route) pendingNotifRouteRef.current = route;
+    });
+    return () => sub.remove();
+  }, [router]);
 
   useEffect(() => {
     let mounted = true;
@@ -72,6 +100,17 @@ function AuthGate() {
 
     if (route === undefined || route === 'login' || route === 'onboarding') {
       router.replace('/(tabs)/home');
+      return;
+    }
+
+    // Signed in and inside the app: honour a cold-start notification
+    // route exactly once (warm taps navigate directly in the listener).
+    const pendingRoute = pendingNotifRouteRef.current;
+    if (pendingRoute && route !== undefined) {
+      pendingNotifRouteRef.current = null;
+      if (!segments.join('/').includes(pendingRoute.replace(/^\//, ''))) {
+        router.push(pendingRoute as any);
+      }
     }
   }, [ready, session, onboardingSeen, segments, router]);
 
@@ -93,10 +132,16 @@ function AuthGate() {
   );
 }
 
-export default function RootLayout() {
+function RootLayout() {
   return (
     <AppProvider>
-      <AuthGate />
+      <AppErrorBoundary>
+        <AuthGate />
+      </AppErrorBoundary>
     </AppProvider>
   );
 }
+
+// Wrapped with Sentry's error handling only when a DSN is configured;
+// otherwise this is the plain component (lib/sentry.ts).
+export default wrapWithSentry(RootLayout);

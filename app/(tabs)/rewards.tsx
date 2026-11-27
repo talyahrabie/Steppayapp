@@ -12,6 +12,7 @@ import {
   saveRedemptionLocal,
   syncRedemption,
 } from '../../lib/redemptions';
+import { trackEvent } from '../../lib/analytics';
 
 const { width } = Dimensions.get('window');
 
@@ -145,6 +146,12 @@ export default function RewardsScreen() {
               await saveRedemptionLocal(record);
               const { data } = await supabase.auth.getSession();
               await syncRedemption(record, data.session?.user?.id ?? null);
+              // Analytics: the redemption is real at this point (points
+              // deducted + record saved) — report it (ids/costs only).
+              trackEvent('reward_redeemed', {
+                reward_id: item.id,
+                points_spent: item.cost,
+              });
               // 4) نجاح حقيقي بعد الخصم والحفظ فقط
               Alert.alert(
                 isAr ? 'مبروك!' : 'Congrats!',

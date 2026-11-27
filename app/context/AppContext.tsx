@@ -1,7 +1,30 @@
 import React, { createContext, useState, useContext, useEffect, useRef } from 'react';
 import { AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { stepsToPoints, levelForXp } from '../../lib/config';
+import { stepsToPoints, levelForXp, todayKey, ONBOARDING_SEEN_KEY } from '../../lib/config';
+import {
+  flushAnalytics,
+  setAnalyticsUserId,
+  trackEvent,
+} from '../../lib/analytics';
+import {
+  cancelDailyReminder,
+  getNotificationPermission,
+  hasAskedNotificationPermission,
+  registerExpoPushToken,
+  requestNotificationPermission,
+  scheduleDailyReminder,
+  subscribeToPushTokenChanges,
+} from '../../lib/notifications';
+import {
+  AntiCheatState,
+  appendStepFlags,
+  emptyAntiCheatState,
+  loadAntiCheatState,
+  persistAntiCheatState,
+  validateStepCredit,
+} from '../../lib/antiCheat';
+import { requestHealthPermission } from '../../lib/healthSync';
 import {
   LedgerEntry,
   appendEarnEntry,
@@ -22,6 +45,8 @@ type AppContextType = {
   language: 'en' | 'ar';
   stepTracking: boolean;
   autoSync: boolean;
+  /** Use Apple Health / Health Connect totals as the primary step source. */
+  healthSync: boolean;
   pushNotifications: boolean;
   dhikrReminders: boolean;
   soundEnabled: boolean;
@@ -35,10 +60,19 @@ type AppContextType = {
   toggleTheme: () => void;
   toggleStepTracking: () => void;
   toggleAutoSync: () => void;
+  toggleHealthSync: () => void;
   togglePushNotifications: () => void;
   toggleDhikrReminders: () => void;
   toggleSoundEnabled: () => void;
-  addSteps: (count: number) => void;
+  /**
+   * Credit newly walked steps (the single choke point between the step
+   * engine and the points ledger). Every batch passes the anti-cheat
+   * plausibility gate (lib/antiCheat.ts) first: only plausible steps
+   * enter the lifetime total and earn points; implausible excess is
+   * withheld and flagged for server review. `opts` lets day close-outs
+   * attribute steps to the day they belong to.
+   */
+  addSteps: (count: number, opts?: { dateKey?: string; atMs?: number }) => void;
   /**
    * Deduct points for a redemption by appending a spend entry to the
    * ledger. Returns false when the balance is too low OR when a spend
@@ -74,6 +108,9 @@ const translations: any = {
     step_tracking_desc_off: "Step counting is paused",
     auto_sync: "Auto Sync",
     auto_sync_desc: "Sync your daily steps to your account automatically",
+    health_sync: "Health App Sync",
+    health_sync_desc_on: "Steps from Apple Health / Health Connect count even when the app is closed",
+    health_sync_desc_off: "Only steps measured while the app runs are counted",
     push_notif: "Push Notifications",
     push_notif_desc: "Get notified about rewards and challenges",
     dhikr: "Dhikr Reminders",
@@ -106,7 +143,11 @@ const translations: any = {
     media_cat_workout: "Workout",
     media_cat_relaxing: "Relaxing",
     media_cat_quran: "Quran",
-    media_cat_azkar: "Azkar"
+    media_cat_azkar: "Azkar",
+    notif_reminder_title: "Don't break your streak! 🔥",
+    notif_reminder_body: "Take an evening walk and reach today's 10,000-step goal.",
+    notif_goal_title: "Goal reached! 🎉",
+    notif_goal_body: "You hit today's 10,000-step goal. Great work — keep it up!"
   },
   ar: {
     nav_home: "الرئيسية",
@@ -123,6 +164,9 @@ const translations: any = {
     step_tracking_desc_off: "عدّ الخطوات متوقف مؤقتًا",
     auto_sync: "المزامنة التلقائية",
     auto_sync_desc: "مزامنة خطواتك اليومية مع حسابك تلقائيًا",
+    health_sync: "مزامنة تطبيق الصحة",
+    health_sync_desc_on: "خطوات Apple Health / Health Connect تُحتسب حتى والتطبيق مغلق",
+    health_sync_desc_off: "تُحتسب فقط الخطوات المقاسة أثناء تشغيل التطبيق",
     push_notif: "الإشعارات الفورية",
     push_notif_desc: "تنبيهات بالمكافآت والتحديات الجديدة",
     dhikr: "تذكير الأذكار",
@@ -155,7 +199,11 @@ const translations: any = {
     media_cat_workout: "التمرين",
     media_cat_relaxing: "الاسترخاء",
     media_cat_quran: "القرآن",
-    media_cat_azkar: "الأذكار"
+    media_cat_azkar: "الأذكار",
+    notif_reminder_title: "حافظ على سلسلتك! 🔥",
+    notif_reminder_body: "اخرج لمشية مسائية وحقّق هدف اليوم: 10,000 خطوة.",
+    notif_goal_title: "حققت الهدف! 🎉",
+    notif_goal_body: "وصلت لهدف اليوم: 10,000 خطوة. عمل رائع — واصل!"
   }
 };
 
@@ -164,6 +212,7 @@ const KEYS = {
   language: 'setting_lang',
   stepTracking: 'setting_step_tracking',
   autoSync: 'setting_auto_sync',
+  healthSync: 'setting_health_sync',
   pushNotifications: 'setting_push_notifications',
   dhikrReminders: 'setting_dhikr_reminders',
   soundEnabled: 'setting_sound_enabled',
@@ -177,6 +226,7 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
   const [language, setLang] = useState<'en' | 'ar'>('en');
   const [stepTracking, setStepTracking] = useState(true);
   const [autoSync, setAutoSync] = useState(true);
+  const [healthSyncEnabled, setHealthSyncEnabled] = useState(true);
   const [pushNotifications, setPushNotifications] = useState(true);
   const [dhikrReminders, setDhikrReminders] = useState(true);
   const [soundEnabled, setSoundEnabled] = useState(true);
@@ -184,6 +234,12 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
   const [points, setPoints] = useState(0);
   const [xp, setXp] = useState(0);
   const [level, setLevel] = useState('Bronze');
+  /** True once loadSettings has applied the persisted settings. */
+  const [hydrated, setHydrated] = useState(false);
+  /** Signed-in user id (null when signed out) — drives analytics + push. */
+  const [sessionUserId, setSessionUserId] = useState<string | null>(null);
+  /** User id for which `session_start` was already reported. */
+  const sessionStartForRef = useRef<string | null>(null);
 
   // Mirror of the progress state so addSteps/spendPoints always compute
   // from the latest values (the previous implementation read stale state
@@ -195,8 +251,18 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
     ledger: [],
   });
 
+  // Anti-cheat validator state (steps already credited per day). Held in
+  // a ref so addSteps can gate synchronously; hydrated in loadSettings
+  // and persisted after every validation that changes it.
+  const antiCheatStateRef = useRef<AntiCheatState>(emptyAntiCheatState());
+
   useEffect(() => {
     loadSettings();
+  }, []);
+
+  // Analytics: one app_open per process start (anonymous until sign-in).
+  useEffect(() => {
+    trackEvent('app_open');
   }, []);
 
   // Retry queued cloud syncs (pending redemptions, failed daily-steps
@@ -216,17 +282,87 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
       }
     };
     retryPendingSyncs();
-    const { data: authListener } = supabase.auth.onAuthStateChange((event) => {
-      if (event === 'SIGNED_IN') retryPendingSyncs();
+    const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
+      const userId = session?.user?.id ?? null;
+      setSessionUserId(userId);
+      setAnalyticsUserId(userId);
+      if (event === 'SIGNED_IN' && userId) {
+        retryPendingSyncs();
+        // One session_start per signed-in user per process.
+        if (sessionStartForRef.current !== userId) {
+          sessionStartForRef.current = userId;
+          trackEvent('session_start');
+        }
+      }
+      if (event === 'SIGNED_OUT') {
+        sessionStartForRef.current = null;
+      }
     });
+    // Restore the user id for a persisted session (no SIGNED_IN event
+    // fires for the initial restore on every client version).
+    supabase.auth.getSession().then(({ data }) => {
+      const userId = data.session?.user?.id ?? null;
+      setSessionUserId(userId);
+      setAnalyticsUserId(userId);
+    }).catch(() => {});
     const appStateSub = AppState.addEventListener('change', (next) => {
-      if (next === 'active') retryPendingSyncs();
+      if (next === 'active') {
+        retryPendingSyncs();
+        void flushAnalytics();
+      } else if (next === 'background') {
+        // Flush the analytics batch before the process is suspended.
+        void flushAnalytics();
+      }
     });
     return () => {
       authListener.subscription.unsubscribe();
       appStateSub.remove();
     };
   }, []);
+
+  // Notifications setup (Phase 1 Batch B): keep the daily reminder and
+  // the push-token registration in step with the user's setting, the OS
+  // permission and the app language. Runs after settings hydrate; the
+  // automatic permission prompt is shown at most once, and only after
+  // onboarding has been seen (a natural moment — the Settings toggle
+  // asks immediately because it is an explicit user gesture).
+  useEffect(() => {
+    if (!hydrated) return;
+    let cancelled = false;
+    (async () => {
+      if (!pushNotifications) {
+        await cancelDailyReminder();
+        return;
+      }
+      let granted = await getNotificationPermission();
+      if (!granted && !cancelled) {
+        const asked = await hasAskedNotificationPermission();
+        const seen = await AsyncStorage.getItem(ONBOARDING_SEEN_KEY);
+        if (!asked && seen === 'true') {
+          granted = await requestNotificationPermission();
+        }
+      }
+      if (cancelled || !granted) return;
+      const strings = translations[language];
+      await scheduleDailyReminder({
+        title: strings.notif_reminder_title,
+        body: strings.notif_reminder_body,
+      });
+      if (sessionUserId) await registerExpoPushToken(sessionUserId);
+    })().catch((e) => console.log('Notification setup failed:', e));
+    return () => {
+      cancelled = true;
+    };
+  }, [hydrated, pushNotifications, language, sessionUserId]);
+
+  // Re-register the Expo push token whenever Expo rotates it.
+  useEffect(() => {
+    if (!sessionUserId) return;
+    const sub = subscribeToPushTokenChanges(() => {
+      void registerExpoPushToken(sessionUserId);
+    });
+    return () => sub.remove();
+  }, [sessionUserId]);
 
   useEffect(() => {
     setLevel(levelForXp(xp));
@@ -235,7 +371,7 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
   const loadSettings = async () => {
     try {
       const entries = await AsyncStorage.multiGet([
-        KEYS.theme, KEYS.language, KEYS.stepTracking, KEYS.autoSync,
+        KEYS.theme, KEYS.language, KEYS.stepTracking, KEYS.autoSync, KEYS.healthSync,
         KEYS.pushNotifications, KEYS.dhikrReminders, KEYS.soundEnabled,
         KEYS.totalSteps, KEYS.points, KEYS.xp,
       ]);
@@ -245,6 +381,7 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
       if (saved[KEYS.language]) setLang(saved[KEYS.language] as 'en' | 'ar');
       if (saved[KEYS.stepTracking] !== null) setStepTracking(saved[KEYS.stepTracking] === 'true');
       if (saved[KEYS.autoSync] !== null) setAutoSync(saved[KEYS.autoSync] === 'true');
+      if (saved[KEYS.healthSync] !== null) setHealthSyncEnabled(saved[KEYS.healthSync] === 'true');
       if (saved[KEYS.pushNotifications] !== null) setPushNotifications(saved[KEYS.pushNotifications] === 'true');
       if (saved[KEYS.dhikrReminders] !== null) setDhikrReminders(saved[KEYS.dhikrReminders] === 'true');
       if (saved[KEYS.soundEnabled] !== null) setSoundEnabled(saved[KEYS.soundEnabled] === 'true');
@@ -270,7 +407,12 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
       setSteps(savedSteps);
       setPoints(balanceFromLedger(ledger));
       setXp(xpFromLedger(ledger));
+
+      // Anti-cheat state: how many steps each recent day has already
+      // credited, so the plausibility ceilings survive app restarts.
+      antiCheatStateRef.current = await loadAntiCheatState();
     } catch (e) { console.log(e); }
+    setHydrated(true);
   };
 
   const persistProgress = async () => {
@@ -294,15 +436,45 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
   };
 
   /**
-   * Add newly walked steps. Points/XP are earned at the single global rate
-   * (lib/config.ts): every STEPS_PER_POINT lifetime steps earns 1 point.
-   * Earnings are appended to the ledger as ONE entry per addSteps batch
-   * (a watch-event delta or a sensor catch-up), never per step.
+   * Add newly walked steps — THE single choke point between the step
+   * engine and the points ledger. Every batch first passes the
+   * anti-cheat plausibility gate (lib/antiCheat.ts):
+   *
+   * - Plausible steps enter the lifetime total and earn points at the
+   *   single global rate (lib/config.ts): every STEPS_PER_POINT
+   *   lifetime steps earns 1 point, appended to the ledger as ONE earn
+   *   entry per batch, never per step.
+   * - Implausible excess (above the daily cap or faster than a human
+   *   can step) is withheld: it never reaches the lifetime total, so it
+   *   can never earn points, and it is recorded as a StepFlag that
+   *   syncs to Supabase for server review.
+   *
+   * `opts.dateKey`/`opts.atMs` attribute the batch to the day it
+   * belongs to — day close-outs pass the closed day and its end-of-day
+   * timestamp so yesterday's honestly-walked remainder is judged
+   * against yesterday's full-day allowance.
    */
-  const addSteps = (count: number) => {
+  const addSteps = (count: number, opts?: { dateKey?: string; atMs?: number }) => {
     if (!count || count <= 0) return;
+    const validation = validateStepCredit(antiCheatStateRef.current, {
+      delta: count,
+      dateKey: opts?.dateKey ?? todayKey(),
+      atMs: opts?.atMs ?? Date.now(),
+    });
+    antiCheatStateRef.current = validation.state;
+    void persistAntiCheatState(validation.state);
+    if (validation.flag) {
+      // Persist the flag locally; lib/stepHistory syncs it to the
+      // `step_flags` table with the day's next cloud sync.
+      void appendStepFlags([validation.flag]);
+      console.log(
+        `Anti-cheat: withheld ${validation.flaggedSteps} implausible steps (${validation.flag.reason})`
+      );
+    }
+    const credited = validation.creditedSteps;
+    if (credited <= 0) return;
     const prev = progressRef.current;
-    const newSteps = prev.steps + count;
+    const newSteps = prev.steps + credited;
     const earnedDelta = stepsToPoints(newSteps) - stepsToPoints(prev.steps);
     progressRef.current = {
       steps: newSteps,
@@ -353,7 +525,49 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
 
   const toggleStepTracking = makeToggle(stepTracking, setStepTracking, KEYS.stepTracking);
   const toggleAutoSync = makeToggle(autoSync, setAutoSync, KEYS.autoSync);
-  const togglePushNotifications = makeToggle(pushNotifications, setPushNotifications, KEYS.pushNotifications);
+
+  /**
+   * Health-sync toggle. Turning it ON also presents the platform
+   * permission prompt (Apple Health / Health Connect) — the clear
+   * in-app entry point for the grant; the pedometer flow re-checks the
+   * state afterwards and starts merging health totals when granted.
+   * Turning it OFF stops health reads immediately (pedometer-only).
+   */
+  const toggleHealthSync = async () => {
+    const newValue = !healthSyncEnabled;
+    setHealthSyncEnabled(newValue);
+    await AsyncStorage.setItem(KEYS.healthSync, newValue ? 'true' : 'false');
+    if (newValue) {
+      trackEvent('health_sync_enabled');
+      await requestHealthPermission().catch((e) =>
+        console.log('Health permission request from Settings failed:', e)
+      );
+    }
+  };
+  /**
+   * Push-notifications toggle. Turning it ON is an explicit user
+   * gesture, so it asks for the OS permission immediately and, when
+   * granted, (re)schedules the daily reminder and registers the push
+   * token. Turning it OFF cancels the daily reminder.
+   */
+  const togglePushNotifications = async () => {
+    const newValue = !pushNotifications;
+    setPushNotifications(newValue);
+    await AsyncStorage.setItem(KEYS.pushNotifications, newValue ? 'true' : 'false');
+    if (!newValue) {
+      await cancelDailyReminder();
+      return;
+    }
+    const granted = await requestNotificationPermission();
+    if (granted) {
+      await scheduleDailyReminder({
+        title: t('notif_reminder_title'),
+        body: t('notif_reminder_body'),
+      });
+      const { data } = await supabase.auth.getSession();
+      await registerExpoPushToken(data.session?.user?.id ?? null);
+    }
+  };
   const toggleDhikrReminders = makeToggle(dhikrReminders, setDhikrReminders, KEYS.dhikrReminders);
   const toggleSoundEnabled = makeToggle(soundEnabled, setSoundEnabled, KEYS.soundEnabled);
 
@@ -366,9 +580,9 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
 
   return (
     <AppContext.Provider value={{
-      theme, language, stepTracking, autoSync, pushNotifications, dhikrReminders, soundEnabled,
+      theme, language, stepTracking, autoSync, healthSync: healthSyncEnabled, pushNotifications, dhikrReminders, soundEnabled,
       steps, points, xp, level,
-      toggleTheme, toggleStepTracking, toggleAutoSync, togglePushNotifications,
+      toggleTheme, toggleStepTracking, toggleAutoSync, toggleHealthSync, togglePushNotifications,
       toggleDhikrReminders, toggleSoundEnabled, addSteps, spendPoints,
       changeLanguage, t, colors: Themes[theme]
     }}>
