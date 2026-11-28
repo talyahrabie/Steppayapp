@@ -26,7 +26,7 @@ beforeEach(() => {
 });
 
 /** Let fire-and-forget flushes triggered by trackEvent settle. */
-const settle = () => new Promise((resolve) => setImmediate(resolve));
+const settle = () => new Promise<void>((resolve) => setImmediate(() => resolve()));
 
 describe('sanitizeProps', () => {
   it('keeps flat primitive props', () => {

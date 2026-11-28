@@ -19,6 +19,10 @@ module.exports = {
       tsconfig: {
         module: 'commonjs',
         moduleResolution: 'node',
+        // TS 6 deprecates moduleResolution 'node' (node10) and requires an
+        // explicit rootDir; both are test-tooling only, app code is unaffected.
+        ignoreDeprecations: '6.0',
+        rootDir: '.',
         jsx: 'react',
         esModuleInterop: true,
         allowSyntheticDefaultImports: true,

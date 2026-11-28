@@ -161,7 +161,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#F8FAFC',
   },
   patternContainer: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
   patternIcon: {
     position: 'absolute',
