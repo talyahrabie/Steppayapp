@@ -1,16 +1,1 @@
-{
-  "cli": {
-    "version": ">= 7.0.0",
-    "appVersionSource": "remote"
-  },
-  "build": {
-    "production": {
-      "android": {
-        "buildType": "apk"
-      },
-      "env": {
-        "NPM_CONFIG_LEGACY_PEER_DEPS": "true"
-      }
-    }
-  }
-}
+{"build":{"development":{"developmentClient":true,"distribution":"internal","env":{"NPM_CONFIG_LEGACY_PEER_DEPS":"true"}},"preview":{"distribution":"internal","env":{"NPM_CONFIG_LEGACY_PEER_DEPS":"true"}},"production":{"android":{"buildType":"app-bundle"},"env":{"NPM_CONFIG_LEGACY_PEER_DEPS":"true"}}},"cli":{"appVersionSource":"local","version":">= 7.0.0"}}
